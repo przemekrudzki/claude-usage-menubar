@@ -20,7 +20,7 @@ script wraps the binary into a `.app` bundle and ad-hoc signs it.
 
 - macOS deployment target: **macOS 14** (`.macOS(.v14)`) — `MenuBarExtra` requires 13+, we target 14.
 - **No third-party dependencies.** Standard library + Apple frameworks only.
-- **No Xcode.** Build with `swift build` / `swift test`. App bundle assembled by `scripts/make-app.sh`.
+- **No Xcode.** Build with `swift build`. **XCTest and Swift Testing are both unavailable under Command Line Tools** — tests run via a hand-rolled harness as an executable target: `swift run ClaudeUsageCoreTests` (see the Testing Convention section). App bundle assembled by `scripts/make-app.sh`.
 - Endpoint: `GET https://api.anthropic.com/api/oauth/usage` with headers
   `Authorization: Bearer <token>`, `anthropic-beta: oauth-2025-04-20`, `Content-Type: application/json`.
 - Keychain item: service **`Claude Code-credentials`**, JSON payload, token at `claudeAiOauth.accessToken`.
@@ -28,6 +28,44 @@ script wraps the binary into a `.app` bundle and ad-hoc signs it.
 - Pure logic (models, parsing, formatting, reducer, palette) goes in `ClaudeUsageCore` and must **not import SwiftUI** so it stays unit-testable under CLT.
 - Bundle identifier: `com.przemek.ClaudeUsageMenuBar`. App display name: `Claude Usage`.
 - Work happens in `~/my-projects/claude-usage-menubar/`. It is already a git repo with the design spec committed.
+
+---
+
+## Testing Convention (read before any test task)
+
+XCTest and Swift Testing require Xcode, which is not installed. Tests are therefore an
+**executable target** `ClaudeUsageCoreTests` with a hand-rolled harness. Task 1 already
+created `Sources/ClaudeUsageCoreTests/TestKit.swift`, `main.swift`, and the package entry
+(`.executableTarget(name: "ClaudeUsageCoreTests", dependencies: ["ClaudeUsageCore"], resources: [.copy("Fixtures")])`).
+
+**Harness API** (global `t` from `TestKit.swift`):
+- `t.group("Name")` — label a block of checks.
+- `t.equal(actual, expected)` — Equatable equality.
+- `t.expect(condition, "message")` — boolean assertion.
+- `t.notNil(optional)` — asserts non-nil; returns the optional so you can bind it.
+- `t.close(actual, expected, accuracy)` — Double approximate equality.
+- `t.throwsError("label") { try someCall() }` — passes when the closure throws.
+
+**Per test task, do this instead of writing an XCTest file:**
+1. Create `Sources/ClaudeUsageCoreTests/Checks_<Name>.swift` containing one function
+   `func <name>Checks() { t.group("<Name>"); … }` (mark it `async` if it awaits).
+2. Wire a call to it into `Sources/ClaudeUsageCoreTests/main.swift`, immediately before
+   the final `t.finish()` line (`await` it if async).
+3. **RED:** `swift run ClaudeUsageCoreTests` — before the implementation type exists this
+   fails to compile (unknown symbol); that compile failure is the red state. Once the type
+   exists but is wrong, it prints `✗ …` lines and `FAIL (n/m checks failed)` with exit 1.
+4. **GREEN:** after implementing, `swift run ClaudeUsageCoreTests` prints `PASS (N checks)`
+   and exits 0.
+
+Fixtures live in `Sources/ClaudeUsageCoreTests/Fixtures/` and load via
+`Bundle.module.url(forResource: "<name>", withExtension: "json", subdirectory: "Fixtures")`.
+
+Wherever a task below shows an XCTest `final class …: XCTestCase` with `XCTAssert*`,
+translate it to this harness. The mapping: `XCTAssertEqual(a,b)`→`t.equal(a,b)`;
+`XCTAssertNil(x)`→`t.expect(x == nil, "…")`; `XCTUnwrap(x)`/`XCTAssertNotNil`→`t.notNil(x)`;
+`XCTAssertEqual(a,b,accuracy:acc)`→`t.close(a,b,acc)`; `XCTAssertThrowsError(try f())`→
+`t.throwsError("…") { try f() }`; `XCTFail("m")`→`t.expect(false, "m")`. Run command is
+always `swift run ClaudeUsageCoreTests`, never `swift test`.
 
 ---
 
@@ -57,18 +95,20 @@ claude-usage-menubar/
       SettingsView.swift             # toggles
       LoginItem.swift                # SMAppService wrapper
       ColorMap.swift                 # RingColor -> SwiftUI Color
-  Tests/
-    ClaudeUsageCoreTests/
+    ClaudeUsageCoreTests/            # executable test runner (no XCTest under CLT)
+      TestKit.swift                  # tiny assert harness (built in Task 1)
+      main.swift                     # calls each *Checks() then t.finish()
       Fixtures/
         usage_full.json
         usage_no_limits.json
-      DateParseTests.swift
-      FormatTests.swift
-      PaletteTests.swift
-      UsageParserTests.swift
-      KeychainReaderTests.swift
-      ReducerTests.swift
-      UsageStoreTests.swift
+      Checks_DateParse.swift
+      Checks_Format.swift
+      Checks_Palette.swift
+      Checks_UsageParser.swift
+      Checks_KeychainReader.swift
+      Checks_Reducer.swift
+      Checks_UsageClient.swift
+      Checks_UsageStore.swift
   scripts/
     make-app.sh
     Info.plist
@@ -88,90 +128,12 @@ claude-usage-menubar/
 - Consumes: nothing.
 - Produces: three targets — library `ClaudeUsageCore`, executable `ClaudeUsage`, test target `ClaudeUsageCoreTests`. Establishes that `swift build` and `swift test` both work.
 
-- [ ] **Step 1: Write `Package.swift`**
-
-```swift
-// swift-tools-version:5.9
-import PackageDescription
-
-let package = Package(
-    name: "ClaudeUsage",
-    platforms: [.macOS(.v14)],
-    targets: [
-        .target(name: "ClaudeUsageCore"),
-        .executableTarget(
-            name: "ClaudeUsage",
-            dependencies: ["ClaudeUsageCore"]
-        ),
-        .testTarget(
-            name: "ClaudeUsageCoreTests",
-            dependencies: ["ClaudeUsageCore"],
-            resources: [.copy("Fixtures")]
-        ),
-    ]
-)
-```
-
-- [ ] **Step 2: Create the Fixtures dir so `.copy` resolves**
-
-```bash
-mkdir -p Tests/ClaudeUsageCoreTests/Fixtures
-echo '{}' > Tests/ClaudeUsageCoreTests/Fixtures/.keep.json
-```
-
-- [ ] **Step 3: Write a minimal placeholder in `Models.swift`**
-
-```swift
-import Foundation
-
-public enum ClaudeUsageCore {
-    public static let version = "0.1.0"
-}
-```
-
-- [ ] **Step 4: Write a minimal `@main` so the executable target compiles**
-
-`Sources/ClaudeUsage/ClaudeUsageApp.swift`:
-
-```swift
-import SwiftUI
-
-@main
-struct ClaudeUsageApp: App {
-    var body: some Scene {
-        MenuBarExtra("Claude Usage") {
-            Button("Quit") { NSApplication.shared.terminate(nil) }
-        }
-    }
-}
-```
-
-- [ ] **Step 5: Write a trivial passing test**
-
-`Tests/ClaudeUsageCoreTests/DateParseTests.swift`:
-
-```swift
-import XCTest
-@testable import ClaudeUsageCore
-
-final class DateParseTests: XCTestCase {
-    func testScaffold() {
-        XCTAssertEqual(ClaudeUsageCore.version, "0.1.0")
-    }
-}
-```
-
-- [ ] **Step 6: Build and test**
-
-Run: `swift build && swift test`
-Expected: `Build complete!` then `Test Suite ... passed`, 1 test, 0 failures.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add Package.swift Sources Tests
-git commit -m "Scaffold SwiftPM package with core lib, executable, and test target"
-```
+**✅ COMPLETE (commit 14881df).** The scaffold exists with three targets — `ClaudeUsageCore`
+(lib), `ClaudeUsage` (executable, minimal `@main` MenuBarExtra), and `ClaudeUsageCoreTests`
+(executable test runner). `Sources/ClaudeUsageCoreTests/` holds `TestKit.swift` (the harness),
+`main.swift` (`scaffoldChecks(); t.finish()`), `Checks_Scaffold.swift`, and `Fixtures/`.
+`swift build` succeeds and `swift run ClaudeUsageCoreTests` prints `PASS (1 checks)`.
+`Models.swift` has `public enum ClaudeUsageCore { public static let version = "0.1.0" }`.
 
 ---
 
