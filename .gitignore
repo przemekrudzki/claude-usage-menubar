@@ -2,3 +2,5 @@
 build/
 DerivedData/
 *.xcuserstate
+.superpowers/
+.build/
