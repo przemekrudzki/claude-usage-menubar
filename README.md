@@ -9,8 +9,6 @@ pulled from the same authenticated endpoint.
 
 Clicking the menu bar item opens a breakdown:
 
-![Usage breakdown dropdown](docs/dropdown.png)
-
 - **5-hour session** — % used and when it resets
 - **7-day** — % used and reset date
 - **Extra usage credits** (if enabled on your account)
@@ -68,6 +66,9 @@ Open with **⌘,** or **Settings…** in the dropdown:
 ![Settings window](docs/settings.png)
 
 - Toggle what shows in the menu bar: **ring**, **5-hour %**, **countdown**, **weekly %**
+- **Text color**: Automatic / Light (white) / Dark (black). Pick **Light** if your menu bar
+  looks dark because of your wallpaper — macOS can't report that case, so auto-detection
+  falls back to the system light/dark mode.
 - **Refresh interval**: 30s / 1 min / 5 min
 - **Launch at login**
 
@@ -83,6 +84,9 @@ The dropdown always shows the full breakdown regardless of the menu-bar toggles.
 - **It never manages authentication** and never stores or transmits your token anywhere —
   it only reads the token Claude Code already has and sends it to Anthropic's own API,
   exactly as Claude Code does. No telemetry, no third-party servers, no analytics.
+- **Resilient to flaky conditions:** it keeps showing the last-known numbers (dimmed) when
+  offline, refreshes the instant the network returns or the Mac wakes from sleep, and backs
+  off politely (honoring `Retry-After`) if the endpoint rate-limits it (HTTP 429).
 
 ## Development
 
@@ -104,8 +108,11 @@ Sources/
   ClaudeUsage/           SwiftUI views + @main MenuBarExtra scene
   ClaudeUsageCoreTests/  hand-rolled TestKit harness + checks + fixtures
 scripts/                 Info.plist + make-app.sh (bundle + ad-hoc sign)
-docs/                    design spec + implementation plan
+docs/                    design spec, implementation plan, and NOTES.md
 ```
+
+See [`docs/NOTES.md`](docs/NOTES.md) for the architecture, the non-obvious decisions, and
+the gotchas worth knowing before changing anything.
 
 ## Caveats
 
@@ -113,6 +120,10 @@ docs/                    design spec + implementation plan
   Claude Code uses internally, but Anthropic could change it at any time and break this app.
 - Distributed as source only. The app is **ad-hoc signed**, not notarized — you build and
   sign it locally, which is why Gatekeeper doesn't complain about your own build.
+- Because ad-hoc signatures change on every build, macOS re-shows the Keychain permission
+  prompt each time you **rebuild or update** the app — click *Always Allow* again. (Normal
+  day-to-day use never re-prompts.) Signing with a stable self-signed identity would avoid
+  this; ad-hoc is the zero-setup default.
 - **Not affiliated with or endorsed by Anthropic.** "Claude" is a trademark of Anthropic;
   this is an unofficial personal utility.
 
