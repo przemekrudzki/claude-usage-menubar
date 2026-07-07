@@ -39,4 +39,13 @@ func usageClientChecks() async {
     } else {
         t.expect(false, "expected success")
     }
+
+    StubURLProtocol.status = 200
+    StubURLProtocol.body = Data("{}".utf8)
+    let c4 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
+    if case .failure(.decoding) = await c4.fetch() {
+        t.expect(true, "decoding path")
+    } else {
+        t.expect(false, "expected .decoding failure on malformed body")
+    }
 }

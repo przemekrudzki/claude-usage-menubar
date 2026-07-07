@@ -6,6 +6,14 @@ struct StubFetcher: UsageFetching {
     func fetch() async -> Result<UsageSnapshot, UsageError> { result }
 }
 
+final class SeqFetcher: UsageFetching, @unchecked Sendable {
+    private var results: [Result<UsageSnapshot, UsageError>]
+    init(_ results: [Result<UsageSnapshot, UsageError>]) { self.results = results }
+    func fetch() async -> Result<UsageSnapshot, UsageError> {
+        results.isEmpty ? .failure(.network("x")) : results.removeFirst()
+    }
+}
+
 @MainActor
 func usageStoreChecks() async {
     t.group("UsageStore")
@@ -24,4 +32,10 @@ func usageStoreChecks() async {
 
     let s3 = UsageStore(fetcher: StubFetcher(result: .failure(.network("x"))), now: { now })
     t.equal(s3.state, .loading)
+
+    let seq = UsageStore(fetcher: SeqFetcher([.success(snap(50)), .failure(.network("x"))]), now: { now })
+    await seq.refresh()
+    t.equal(seq.state, .ok(snap(50)))
+    await seq.refresh()
+    t.equal(seq.state, .stale(snap(50), since: now))
 }

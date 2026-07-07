@@ -19,8 +19,7 @@ struct ClaudeUsageApp: App {
                 .task {
                     store.start(intervalSeconds: interval)
                     if !didFirstRun {
-                        LoginItem.setEnabled(true)
-                        didFirstRun = true
+                        if LoginItem.setEnabled(true) { didFirstRun = true }
                     }
                 }
                 .onChange(of: interval) { _, newValue in
