@@ -7,5 +7,6 @@ formatChecks()
 paletteChecks()
 usageParserChecks()
 keychainReaderChecks()
+reducerChecks()
 
 t.finish()
