@@ -8,5 +8,6 @@ paletteChecks()
 usageParserChecks()
 keychainReaderChecks()
 reducerChecks()
+await usageClientChecks()
 
 t.finish()
