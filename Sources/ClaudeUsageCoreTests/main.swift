@@ -3,5 +3,7 @@
 
 scaffoldChecks()
 dateParseChecks()
+formatChecks()
+paletteChecks()
 
 t.finish()
