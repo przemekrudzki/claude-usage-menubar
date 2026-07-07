@@ -4,7 +4,7 @@ public enum ClaudeUsageCore {
     public static let version = "0.1.0"
 }
 
-public struct UsageWindow: Equatable {
+public struct UsageWindow: Equatable, Sendable {
     public let percent: Double
     public let resetsAt: Date
     public let severity: String
@@ -13,7 +13,7 @@ public struct UsageWindow: Equatable {
     }
 }
 
-public struct Credits: Equatable {
+public struct Credits: Equatable, Sendable {
     public let used: Double
     public let limit: Double
     public let currency: String
@@ -23,7 +23,7 @@ public struct Credits: Equatable {
     }
 }
 
-public struct UsageSnapshot: Equatable {
+public struct UsageSnapshot: Equatable, Sendable {
     public let session: UsageWindow
     public let weekly: UsageWindow
     public let credits: Credits?
@@ -33,18 +33,18 @@ public struct UsageSnapshot: Equatable {
     }
 }
 
-public enum UsageState: Equatable {
+public enum UsageState: Equatable, Sendable {
     case loading
     case ok(UsageSnapshot)
     case stale(UsageSnapshot, since: Date)
     case needsAuth
 }
 
-public enum UsageError: Error, Equatable {
+public enum UsageError: Error, Equatable, Sendable {
     case noToken
     case unauthorized
     case network(String)
     case decoding(String)
 }
 
-public enum RingColor: Equatable { case green, amber, red }
+public enum RingColor: Equatable, Sendable { case green, amber, red }

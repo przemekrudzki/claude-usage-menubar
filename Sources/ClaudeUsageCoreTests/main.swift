@@ -9,5 +9,6 @@ usageParserChecks()
 keychainReaderChecks()
 reducerChecks()
 await usageClientChecks()
+await usageStoreChecks()
 
 t.finish()
