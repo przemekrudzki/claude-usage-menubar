@@ -15,4 +15,7 @@ func reducerChecks() {
     let since = Date(timeIntervalSince1970: 100)
     t.equal(Reducer.map(.failure(.network("x")), previous: .stale(snap(10), since: since), now: now), .stale(snap(10), since: since))
     t.equal(Reducer.map(.failure(.network("x")), previous: .loading, now: now), .loading)
+    // rate-limit is transient like a network error: keep last-good data, else stay loading
+    t.equal(Reducer.map(.failure(.rateLimited(retryAfter: 30)), previous: .ok(snap(10)), now: now), .stale(snap(10), since: now))
+    t.equal(Reducer.map(.failure(.rateLimited(retryAfter: nil)), previous: .loading, now: now), .loading)
 }

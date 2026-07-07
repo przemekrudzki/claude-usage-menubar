@@ -45,6 +45,7 @@ public enum UsageError: Error, Equatable, Sendable {
     case unauthorized
     case network(String)
     case decoding(String)
+    case rateLimited(retryAfter: Double?)
 }
 
 public enum RingColor: Equatable, Sendable { case green, amber, red }

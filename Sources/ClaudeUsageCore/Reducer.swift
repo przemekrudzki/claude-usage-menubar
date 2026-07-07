@@ -10,7 +10,7 @@ public enum Reducer {
             switch err {
             case .noToken, .unauthorized:
                 return .needsAuth
-            case .network, .decoding:
+            case .network, .decoding, .rateLimited:
                 switch previous {
                 case .ok(let snap):
                     return .stale(snap, since: now)

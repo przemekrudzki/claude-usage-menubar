@@ -48,4 +48,13 @@ func usageClientChecks() async {
     } else {
         t.expect(false, "expected .decoding failure on malformed body")
     }
+
+    StubURLProtocol.status = 429
+    StubURLProtocol.body = Data("rate limited".utf8)
+    let c5 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
+    if case .failure(.rateLimited) = await c5.fetch() {
+        t.expect(true, "rate-limited path")
+    } else {
+        t.expect(false, "expected .rateLimited failure on HTTP 429")
+    }
 }

@@ -27,11 +27,17 @@ public final class UsageClient: UsageFetching {
 
         do {
             let (data, response) = try await session.data(for: req)
-            if let http = response as? HTTPURLResponse, http.statusCode == 401 {
-                return .failure(.unauthorized)
-            }
-            if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                return .failure(.network("HTTP \(http.statusCode)"))
+            if let http = response as? HTTPURLResponse {
+                if http.statusCode == 401 {
+                    return .failure(.unauthorized)
+                }
+                if http.statusCode == 429 {
+                    let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+                    return .failure(.rateLimited(retryAfter: retryAfter))
+                }
+                if !(200...299).contains(http.statusCode) {
+                    return .failure(.network("HTTP \(http.statusCode)"))
+                }
             }
             let snap = try UsageParser.snapshot(from: data, now: now())
             return .success(snap)
