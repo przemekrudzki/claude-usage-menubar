@@ -3,6 +3,7 @@ import ClaudeUsageCore
 
 struct DropdownView: View {
     let store: UsageStore
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -11,7 +12,12 @@ struct DropdownView: View {
             }
             Divider()
             Button("Refresh now") { Task { await store.refresh() } }
-            SettingsLink { Text("Settings…") }
+            // SettingsLink does not surface the window in an LSUIElement app;
+            // activate the app first, then open Settings explicitly.
+            Button("Settings…") {
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                openSettings()
+            }
             Divider()
             Button("Quit") { NSApplication.shared.terminate(nil) }
         }
@@ -50,7 +56,7 @@ struct DropdownView: View {
             Text("Updated \(Format.countdown(to: now, now: snap.fetchedAt)) ago")
                 .font(.caption2).foregroundStyle(.secondary)
             if let c = snap.credits {
-                Text(String(format: "Extra credits: %.\(c.decimalPlaces)f / %.0f %@",
+                Text(String(format: "Extra credits: %.\(c.decimalPlaces)f / %.\(c.decimalPlaces)f %@",
                             c.used, c.limit, c.currency))
                     .font(.caption).foregroundStyle(.secondary)
             }

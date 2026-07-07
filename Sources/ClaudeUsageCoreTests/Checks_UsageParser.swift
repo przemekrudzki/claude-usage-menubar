@@ -16,8 +16,8 @@ func usageParserChecks() {
         t.equal(snap.session.severity, "normal")
         t.equal(snap.weekly.percent, 22)
         t.equal(snap.weekly.severity, "warning")
-        t.equal(snap.credits?.used ?? -1, 12.5)
-        t.equal(snap.credits?.limit ?? -1, 5000)
+        t.equal(snap.credits?.used ?? -1, 12.34)
+        t.equal(snap.credits?.limit ?? -1, 50)
         t.equal(snap.credits?.currency ?? "", "CAD")
         t.equal(snap.fetchedAt, now)
     } else {

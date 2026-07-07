@@ -48,10 +48,13 @@ public enum UsageParser {
 
     private static func parseCredits(_ e: [String: Any]?) -> Credits? {
         guard let e, (e["is_enabled"] as? Bool) == true else { return nil }
-        let used = (e["used_credits"] as? NSNumber)?.doubleValue ?? 0
-        let limit = (e["monthly_limit"] as? NSNumber)?.doubleValue ?? 0
+        let usedRaw = (e["used_credits"] as? NSNumber)?.doubleValue ?? 0
+        let limitRaw = (e["monthly_limit"] as? NSNumber)?.doubleValue ?? 0
         let currency = (e["currency"] as? String) ?? "USD"
         let places = (e["decimal_places"] as? NSNumber)?.intValue ?? 2
-        return Credits(used: used, limit: limit, currency: currency, decimalPlaces: places)
+        // Amounts arrive in minor units (e.g. cents): 5000 with decimal_places 2 = 50.00.
+        let scale = pow(10.0, Double(places))
+        return Credits(used: usedRaw / scale, limit: limitRaw / scale,
+                       currency: currency, decimalPlaces: places)
     }
 }
