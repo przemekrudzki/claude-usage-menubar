@@ -2,5 +2,6 @@
 // Checks_*.swift file and wires a call in here. `t.finish()` must be last.
 
 scaffoldChecks()
+dateParseChecks()
 
 t.finish()
