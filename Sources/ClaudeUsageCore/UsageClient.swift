@@ -1,14 +1,14 @@
 import Foundation
 
 public final class UsageClient: UsageFetching {
-    private let tokenProvider: () throws -> String
+    private let tokenProvider: @Sendable () throws -> String
     private let session: URLSession
-    private let now: () -> Date
+    private let now: @Sendable () -> Date
     private let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
 
-    public init(tokenProvider: @escaping () throws -> String = { try KeychainReader.readToken() },
+    public init(tokenProvider: @escaping @Sendable () throws -> String = { try KeychainReader.readToken() },
                 session: URLSession = .shared,
-                now: @escaping () -> Date = { Date() }) {
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.tokenProvider = tokenProvider
         self.session = session
         self.now = now
