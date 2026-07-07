@@ -6,5 +6,6 @@ dateParseChecks()
 formatChecks()
 paletteChecks()
 usageParserChecks()
+keychainReaderChecks()
 
 t.finish()
