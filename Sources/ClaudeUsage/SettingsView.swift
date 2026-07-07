@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.showCountdown) private var showCountdown = true
     @AppStorage(SettingsKeys.showWeekly) private var showWeekly = true
     @AppStorage(SettingsKeys.refreshInterval) private var interval = RefreshInterval.s60.rawValue
+    @AppStorage(SettingsKeys.menuBarTextColor) private var textColor = MenuBarTextColor.auto.rawValue
     @State private var launchAtLogin = LoginItem.isEnabled
 
     var body: some View {
@@ -16,6 +17,11 @@ struct SettingsView: View {
                 Toggle("5-hour %", isOn: $showSession)
                 Toggle("Countdown to reset", isOn: $showCountdown)
                 Toggle("Weekly %", isOn: $showWeekly)
+                Picker("Text color", selection: $textColor) {
+                    ForEach(MenuBarTextColor.allCases, id: \.rawValue) { opt in
+                        Text(opt.label).tag(opt.rawValue)
+                    }
+                }
             }
             Section("Behavior") {
                 Picker("Refresh every", selection: $interval) {

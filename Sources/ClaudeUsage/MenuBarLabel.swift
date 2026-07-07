@@ -1,14 +1,13 @@
 import SwiftUI
+import AppKit
 import ClaudeUsageCore
 
 /// The always-visible menu bar content. `MenuBarExtra` does not reliably render
-/// a multi-element SwiftUI layout (or custom shapes like the ring) directly as
-/// its label, so we rasterize the composed view into an `NSImage` and show that.
-/// The image is a template (`isTemplate = true`) so macOS tints it to match the
-/// menu bar's text color in every appearance — including light mode with a
-/// wallpaper-darkened bar, which `effectiveAppearance` can't detect. The bar
-/// ring is therefore monochrome; the color-coded severity rings live in the
-/// dropdown.
+/// a multi-element SwiftUI layout (or custom shapes) directly, so we rasterize the
+/// composed view into a single colored `NSImage` (`isTemplate = false`) — this keeps
+/// the ring's severity color. Because a non-template image is shown as-is, the text
+/// color can't auto-adapt to a wallpaper-darkened menu bar (which the appearance API
+/// can't detect), so its color follows the user's "menu bar text color" setting.
 struct MenuBarLabel: View {
     let state: UsageState
     let now: Date
@@ -17,9 +16,20 @@ struct MenuBarLabel: View {
     @AppStorage(SettingsKeys.showSessionPercent) private var showSession = true
     @AppStorage(SettingsKeys.showCountdown) private var showCountdown = true
     @AppStorage(SettingsKeys.showWeekly) private var showWeekly = true
+    @AppStorage(SettingsKeys.menuBarTextColor) private var textColorMode = MenuBarTextColor.auto.rawValue
 
     var body: some View {
         Image(nsImage: rendered())
+    }
+
+    private var textColor: Color {
+        switch MenuBarTextColor(rawValue: textColorMode) ?? .auto {
+        case .light: return .white
+        case .dark: return .black
+        case .auto:
+            let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return isDark ? .white : .black
+        }
     }
 
     @MainActor
@@ -31,7 +41,7 @@ struct MenuBarLabel: View {
             cgImage: cg,
             size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)
         )
-        image.isTemplate = true
+        image.isTemplate = false
         return image
     }
 
@@ -39,7 +49,7 @@ struct MenuBarLabel: View {
     private var composed: some View {
         switch state {
         case .loading, .needsAuth:
-            RingView(percent: 0, color: .secondary, filled: false)
+            RingView(percent: 0, color: textColor, filled: false)
                 .frame(width: 15, height: 15)
                 .padding(2)
         case .ok(let snap):
@@ -57,18 +67,20 @@ struct MenuBarLabel: View {
                 RingView(percent: snap.session.percent, color: color(for: ring))
                     .frame(width: 15, height: 15)
             }
-            if showSession {
-                Text("\(Int(snap.session.percent.rounded()))%")
+            Group {
+                if showSession {
+                    Text("\(Int(snap.session.percent.rounded()))%")
+                }
+                if showCountdown {
+                    Text(Format.countdown(to: snap.session.resetsAt, now: now))
+                }
+                if showWeekly {
+                    Text("7d \(Int(snap.weekly.percent.rounded()))%")
+                }
             }
-            if showCountdown {
-                Text(Format.countdown(to: snap.session.resetsAt, now: now))
-            }
-            if showWeekly {
-                Text("7d \(Int(snap.weekly.percent.rounded()))%")
-            }
+            .foregroundStyle(textColor)
         }
         .font(.system(size: 13))
-        .foregroundStyle(.primary)
         .opacity(dim ? 0.5 : 1)
         .padding(.vertical, 1)
         .padding(.horizontal, 2)
