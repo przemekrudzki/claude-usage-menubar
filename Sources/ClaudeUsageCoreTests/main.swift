@@ -5,5 +5,6 @@ scaffoldChecks()
 dateParseChecks()
 formatChecks()
 paletteChecks()
+usageParserChecks()
 
 t.finish()
