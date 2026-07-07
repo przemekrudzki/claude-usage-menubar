@@ -4,7 +4,11 @@ import ClaudeUsageCore
 /// The always-visible menu bar content. `MenuBarExtra` does not reliably render
 /// a multi-element SwiftUI layout (or custom shapes like the ring) directly as
 /// its label, so we rasterize the composed view into an `NSImage` and show that.
-/// `isTemplate = false` keeps the ring's color instead of a monochrome tint.
+/// The image is a template (`isTemplate = true`) so macOS tints it to match the
+/// menu bar's text color in every appearance — including light mode with a
+/// wallpaper-darkened bar, which `effectiveAppearance` can't detect. The bar
+/// ring is therefore monochrome; the color-coded severity rings live in the
+/// dropdown.
 struct MenuBarLabel: View {
     let state: UsageState
     let now: Date
@@ -27,7 +31,7 @@ struct MenuBarLabel: View {
             cgImage: cg,
             size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)
         )
-        image.isTemplate = false
+        image.isTemplate = true
         return image
     }
 

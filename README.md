@@ -5,11 +5,11 @@ limits** you've used, at a glance — the rolling **5-hour session** window and 
 weekly** window, with reset times. It's the same data the in-app `/usage` command shows,
 pulled from the same authenticated endpoint.
 
-```
-◔ 82%  1h 27m  7d 23%
-```
+![The app in the menu bar](docs/menubar.png)
 
 Clicking the menu bar item opens a breakdown:
+
+![Usage breakdown dropdown](docs/dropdown.png)
 
 - **5-hour session** — % used and when it resets
 - **7-day** — % used and reset date
@@ -64,6 +64,8 @@ and confirm it works), then choose **Refresh now** from the dropdown.
 ## Settings
 
 Open with **⌘,** or **Settings…** in the dropdown:
+
+![Settings window](docs/settings.png)
 
 - Toggle what shows in the menu bar: **ring**, **5-hour %**, **countdown**, **weekly %**
 - **Refresh interval**: 30s / 1 min / 5 min
