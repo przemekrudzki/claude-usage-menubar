@@ -68,8 +68,13 @@ back to the objects. Credit amounts are in **minor units** — divide `monthly_l
 5. **Keychain re-prompts on every rebuild.** Ad-hoc signatures change per build, so the
    "Always Allow" grant (keyed on the code signature) doesn't carry over — macOS re-prompts,
    and if the prompt isn't answered the `SecItemCopyMatching` read **blocks**, leaving the app
-   stuck on "Loading". Normal use (install once) is fine. A stable self-signed signing identity
-   would make the grant durable across rebuilds — not yet implemented.
+   stuck on "Loading". Normal use (install once) is fine. **Fix:** run
+   `./scripts/create-signing-cert.sh` once to create a stable self-signed code-signing identity
+   (`Claude Usage Self-Signed`) in the login Keychain; `make-app.sh` signs with it when present
+   (else falls back to ad-hoc). The designated requirement is then constant across rebuilds, so
+   "Always Allow" persists. This is a *local* self-signed cert — no Apple Developer account, and
+   Gatekeeper still treats the app as unidentified (same as ad-hoc); only the Keychain grant
+   stability changes.
 
 6. **The endpoint rate-limits (HTTP 429) under bursty use.** Rapid rebuild/relaunch/refresh
    cycles (and manual `curl` probes) trip it; a lone request still gets 200. The client maps
@@ -87,9 +92,10 @@ back to the objects. Credit amounts are in **minor units** — divide `monthly_l
 ## Build / run / test
 
 ```sh
-swift build                      # compile
-swift run ClaudeUsageCoreTests   # tests (currently 49 checks)
-./scripts/make-app.sh            # build + bundle + ad-hoc sign → "Claude Usage.app"
+swift build                        # compile
+swift run ClaudeUsageCoreTests     # tests (currently 49 checks)
+./scripts/create-signing-cert.sh   # ONE-TIME: stable self-signed identity (durable Keychain grant)
+./scripts/make-app.sh              # build + bundle + sign → "Claude Usage.app"
 cp -R "Claude Usage.app" /Applications/
 ```
 
