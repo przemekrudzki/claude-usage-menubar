@@ -45,7 +45,8 @@ open "/Applications/Claude Usage.app"
 ```
 
 `make-app.sh` builds a release binary, wraps it into `Claude Usage.app` (a menu bar
-"accessory" app with no Dock icon), and ad-hoc signs it for personal use.
+"accessory" app with no Dock icon), and signs it for personal use — with your stable
+self-signed identity if you've made one (see below), otherwise ad-hoc.
 
 ### First launch
 
@@ -58,6 +59,26 @@ open "/Applications/Claude Usage.app"
 
 If the numbers don't appear, make sure you're signed into Claude Code (run `claude` once
 and confirm it works), then choose **Refresh now** from the dropdown.
+
+### Stop the Keychain prompt from coming back after rebuilds (optional)
+
+By default the app is **ad-hoc signed**, and ad-hoc signatures change on every build. macOS
+ties the *Always Allow* grant to the app's signature, so each time you **rebuild or update**
+the app it looks like a new app and the Keychain prompt returns. (Plain day-to-day use never
+re-prompts — this only bites if you rebuild.)
+
+To make the grant stick permanently, create a stable **self-signed** signing identity once:
+
+```sh
+./scripts/create-signing-cert.sh   # one-time; may ask for your login password once
+./scripts/make-app.sh              # now signs with that identity
+cp -R "Claude Usage.app" /Applications/
+```
+
+Launch it and click **Always Allow** one final time — from then on the grant survives every
+rebuild. This is a *local* self-signed cert: **no Apple Developer account** needed, and it
+doesn't change how Gatekeeper sees the app (still your own unidentified build) — it only
+keeps the Keychain permission stable.
 
 ## Settings
 
@@ -107,7 +128,7 @@ Sources/
   ClaudeUsageCore/       parsing, Keychain read, HTTP client, polling store (pure, tested)
   ClaudeUsage/           SwiftUI views + @main MenuBarExtra scene
   ClaudeUsageCoreTests/  hand-rolled TestKit harness + checks + fixtures
-scripts/                 Info.plist + make-app.sh (bundle + ad-hoc sign)
+scripts/                 Info.plist + make-app.sh (bundle + sign) + create-signing-cert.sh
 docs/                    design spec, implementation plan, and NOTES.md
 ```
 
@@ -122,8 +143,10 @@ the gotchas worth knowing before changing anything.
   sign it locally, which is why Gatekeeper doesn't complain about your own build.
 - Because ad-hoc signatures change on every build, macOS re-shows the Keychain permission
   prompt each time you **rebuild or update** the app — click *Always Allow* again. (Normal
-  day-to-day use never re-prompts.) Signing with a stable self-signed identity would avoid
-  this; ad-hoc is the zero-setup default.
+  day-to-day use never re-prompts.) Run `./scripts/create-signing-cert.sh` once to sign with
+  a stable self-signed identity and make the grant permanent — see
+  [Stop the Keychain prompt from coming back](#stop-the-keychain-prompt-from-coming-back-after-rebuilds-optional).
+  Ad-hoc is the zero-setup default.
 - **Not affiliated with or endorsed by Anthropic.** "Claude" is a trademark of Anthropic;
   this is an unofficial personal utility.
 
