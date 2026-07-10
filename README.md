@@ -50,35 +50,29 @@ self-signed identity if you've made one (see below), otherwise ad-hoc.
 
 ### First launch
 
-1. **Keychain prompt** — the first time it runs, macOS asks whether "Claude Usage" may
-   use the **"Claude Code-credentials"** Keychain item. Click **Always Allow**. This is
-   how it reads your token; it happens once. (If the ring looks empty/hollow, this prompt
-   is waiting for you.)
+1. **No Keychain prompt expected** — the app reads your token through Apple's
+   `/usr/bin/security` tool, the same one Claude Code uses to store it, which is already
+   authorized for the **"Claude Code-credentials"** Keychain item. If macOS ever does ask
+   anyway, click **Always Allow**.
 2. **Launch at login** — enabled automatically on first run, so it comes back after a
    reboot. Toggle it anytime in **Settings**.
 
 If the numbers don't appear, make sure you're signed into Claude Code (run `claude` once
 and confirm it works), then choose **Refresh now** from the dropdown.
 
-### Stop the Keychain prompt from coming back after rebuilds (optional)
+### Why rebuilds don't re-prompt for the Keychain
 
-By default the app is **ad-hoc signed**, and ad-hoc signatures change on every build. macOS
-ties the *Always Allow* grant to the app's signature, so each time you **rebuild or update**
-the app it looks like a new app and the Keychain prompt returns. (Plain day-to-day use never
-re-prompts — this only bites if you rebuild.)
+The app never calls the Keychain API for the token directly — a per-app grant would be
+keyed on the build's code signature (its cdhash, since a personal build has no Team ID)
+and would break on **every rebuild**. Instead it shells out to `/usr/bin/security
+find-generic-password`, an Apple tool that Claude Code itself uses to create the item and
+that is therefore permanently on the item's access list. No prompt, no matter how often
+you rebuild.
 
-To make the grant stick permanently, create a stable **self-signed** signing identity once:
-
-```sh
-./scripts/create-signing-cert.sh   # one-time; may ask for your login password once
-./scripts/make-app.sh              # now signs with that identity
-cp -R "Claude Usage.app" /Applications/
-```
-
-Launch it and click **Always Allow** one final time — from then on the grant survives every
-rebuild. This is a *local* self-signed cert: **no Apple Developer account** needed, and it
-doesn't change how Gatekeeper sees the app (still your own unidentified build) — it only
-keeps the Keychain permission stable.
+Optionally, `./scripts/create-signing-cert.sh` (one-time) creates a stable local
+self-signed identity so `make-app.sh` produces a consistent code signature across builds —
+nice to have, but no longer required for Keychain access. No Apple Developer account
+needed either way.
 
 ## Settings
 
@@ -141,12 +135,9 @@ the gotchas worth knowing before changing anything.
   Claude Code uses internally, but Anthropic could change it at any time and break this app.
 - Distributed as source only. The app is **ad-hoc signed**, not notarized — you build and
   sign it locally, which is why Gatekeeper doesn't complain about your own build.
-- Because ad-hoc signatures change on every build, macOS re-shows the Keychain permission
-  prompt each time you **rebuild or update** the app — click *Always Allow* again. (Normal
-  day-to-day use never re-prompts.) Run `./scripts/create-signing-cert.sh` once to sign with
-  a stable self-signed identity and make the grant permanent — see
-  [Stop the Keychain prompt from coming back](#stop-the-keychain-prompt-from-coming-back-after-rebuilds-optional).
-  Ad-hoc is the zero-setup default.
+- The token is read via `/usr/bin/security` rather than the Keychain API, so rebuilding
+  or updating the app does **not** re-trigger the macOS Keychain permission prompt — see
+  [Why rebuilds don't re-prompt for the Keychain](#why-rebuilds-dont-re-prompt-for-the-keychain).
 - **Not affiliated with or endorsed by Anthropic.** "Claude" is a trademark of Anthropic;
   this is an unofficial personal utility.
 

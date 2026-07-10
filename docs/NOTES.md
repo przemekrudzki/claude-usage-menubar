@@ -18,7 +18,8 @@ Two targets, kept deliberately separate:
   - `Format` — countdown ("2h 13m", "<1m", "now").
   - `Palette` — percent + API `severity` → `RingColor` (green/amber/red).
   - `UsageParser` — decodes `/api/oauth/usage` JSON → `UsageSnapshot`.
-  - `KeychainReader` — reads the token; pure `token(fromJSON:)` + `readToken()` I/O.
+  - `KeychainReader` — reads the token; pure `token(fromJSON:)` + `readToken()` I/O
+    (via `/usr/bin/security`, see gotcha 5; `SecItemCopyMatching` only as fallback).
   - `UsageClient` (`UsageFetching`) — HTTP call + error mapping (401 / 429 / network / decode).
   - `Reducer` — pure `(Result, previous) → UsageState` (loading/ok/stale/needsAuth).
   - `UsageStore` — `@MainActor @Observable`; owns the poll loop + backoff.
@@ -65,16 +66,24 @@ back to the objects. Credit amounts are in **minor units** — divide `monthly_l
    button uses `NSApplication.shared.activate(ignoringOtherApps:)` + `@Environment(\.openSettings)`
    instead.
 
-5. **Keychain re-prompts on every rebuild.** Ad-hoc signatures change per build, so the
-   "Always Allow" grant (keyed on the code signature) doesn't carry over — macOS re-prompts,
-   and if the prompt isn't answered the `SecItemCopyMatching` read **blocks**, leaving the app
-   stuck on "Loading". Normal use (install once) is fine. **Fix:** run
-   `./scripts/create-signing-cert.sh` once to create a stable self-signed code-signing identity
-   (`Claude Usage Self-Signed`) in the login Keychain; `make-app.sh` signs with it when present
-   (else falls back to ad-hoc). The designated requirement is then constant across rebuilds, so
-   "Always Allow" persists. This is a *local* self-signed cert — no Apple Developer account, and
-   Gatekeeper still treats the app as unidentified (same as ad-hoc); only the Keychain grant
-   stability changes.
+5. **Keychain re-prompts on every rebuild — the stable signing identity was NOT enough.**
+   Reading the item with `SecItemCopyMatching` triggers the per-app ACL prompt, and if the
+   prompt isn't answered the read **blocks**, leaving the app stuck on "Loading". The first
+   fix (a stable self-signed identity, `./scripts/create-signing-cert.sh`) pinned the
+   *designated requirement* so the "Always Allow" entry in the item's application list stayed
+   valid — but macOS Sierra+ keychain items ALSO have a **`partition_id` ACL**, and for an app
+   with **no Team ID** (any personal/self-signed build) that grant is keyed on the build's
+   **cdhash**, which changes on every rebuild. So it re-prompted anyway. (Seen directly with
+   `security dump-keychain -a`: entry `partition_id` = `apple-tool:, cdhash:<one stale hash>`,
+   plus a graveyard of dead per-build cdhash application entries.)
+   **Real fix:** `KeychainReader.readToken()` shells out to
+   `/usr/bin/security find-generic-password -s "Claude Code-credentials" -w`. Claude Code
+   creates the item through that same Apple tool, so `/usr/bin/security` is permanently in the
+   item's application list and its `apple-tool:` partition is in the partition list — the read
+   never prompts, regardless of how this app is signed, and survives rebuilds *and* Claude Code
+   recreating the item. `SecItemCopyMatching` remains only as a fallback. The signing scripts
+   are kept for a stable code signature but are no longer load-bearing for Keychain access.
+   Gated end-to-end check: `CLAUDE_USAGE_KEYCHAIN_IT=1 swift run ClaudeUsageCoreTests`.
 
 6. **The endpoint rate-limits (HTTP 429) under bursty use.** Rapid rebuild/relaunch/refresh
    cycles (and manual `curl` probes) trip it; a lone request still gets 200. The client maps
@@ -100,7 +109,8 @@ cp -R "Claude Usage.app" /Applications/
 ```
 
 `make-app.sh` reads the release binary path via `swift build -c release --show-bin-path`,
-assembles the `.app` (Info.plist sets `LSUIElement`), and `codesign --sign -` (ad-hoc).
+assembles the `.app` (Info.plist sets `LSUIElement`), and signs it — with the
+`Claude Usage Self-Signed` identity when present, else ad-hoc.
 
 ## History / process
 
