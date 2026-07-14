@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.refreshInterval) private var interval = RefreshInterval.s60.rawValue
     @AppStorage(SettingsKeys.menuBarTextColor) private var textColor = MenuBarTextColor.auto.rawValue
     @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var loginItemMessage: String?
 
     var body: some View {
         Form {
@@ -30,11 +31,33 @@ struct SettingsView: View {
                     }
                 }
                 Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { _, on in LoginItem.setEnabled(on) }
+                    .onChange(of: launchAtLogin) { _, on in
+                        guard on != LoginItem.isEnabled || (!on && LoginItem.requiresApproval) else {
+                            return
+                        }
+                        switch LoginItem.setEnabled(on) {
+                        case .applied:
+                            loginItemMessage = nil
+                        case .pendingApproval:
+                            loginItemMessage = "Approve Claude Usage in System Settings > General > Login Items."
+                        case .failed:
+                            launchAtLogin = LoginItem.isEnabled
+                            loginItemMessage = "The launch-at-login setting could not be changed."
+                        }
+                    }
+                if let loginItemMessage {
+                    Text(loginItemMessage).font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
         .frame(width: 320)
         .padding()
+        .onAppear {
+            launchAtLogin = LoginItem.isEnabled
+            loginItemMessage = LoginItem.requiresApproval
+                ? "Approve Claude Usage in System Settings > General > Login Items."
+                : nil
+        }
     }
 }

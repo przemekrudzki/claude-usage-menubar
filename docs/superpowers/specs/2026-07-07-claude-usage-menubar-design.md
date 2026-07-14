@@ -41,14 +41,15 @@ Claude Code:
   "limits": [
     { "kind": "session",       "group": "session", "percent": 38, "severity": "normal", "resets_at": "…", "is_active": true },
     { "kind": "weekly_all",    "group": "weekly",  "percent": 19, "severity": "normal", "resets_at": "…", "is_active": false },
-    { "kind": "weekly_scoped", "group": "weekly",  "percent": 19, "severity": "normal", "resets_at": "…" }
+    { "kind": "weekly_scoped", "group": "weekly",  "percent": 19, "severity": "normal", "resets_at": "…", "scope": { "model": { "id": null, "display_name": "Fable" } } }
   ]
 }
 ```
 
 Parsing rules:
 - **Session %** = `limits[]` entry with `kind == "session"` (fallback `five_hour.utilization`).
-- **Weekly %** = `limits[]` entry with `group == "weekly"`, highest `percent` (fallback `seven_day.utilization`).
+- **All-model weekly %** = `limits[]` entry with `kind == "weekly_all"` (fallback `seven_day.utilization`).
+- **Model weekly %** = each `limits[]` entry with `kind == "weekly_scoped"`, labeled from `scope.model.display_name` and shown separately in the dropdown.
 - **Reset times** from the corresponding `resets_at`.
 - **Severity** from the matching `limits[]` entry, used to drive ring color.
 - **Extra credits** from `extra_usage` when `is_enabled`.
@@ -142,8 +143,8 @@ enum UsageState {
 }
 ```
 
-`UsageSnapshot` holds session%, weekly%, their reset dates, severity, optional credits,
-and fetchedAt.
+`UsageSnapshot` holds session%, all-model weekly%, model-scoped weekly windows, reset dates,
+severity, optional credits, and fetchedAt.
 
 ## Components
 
@@ -164,7 +165,7 @@ and fetchedAt.
 - **KeychainReader**: unit test the JSON parse (valid, missing key, malformed) against
   fixture blobs — no Keychain access in tests.
 - **UsageClient decode**: unit test decoding the verified response fixture → correct
-  session%, weekly% (max of weekly group), reset dates, credits; and a
+  session%, all-model and model-scoped weekly percentages, reset dates, credits; and a
   no-`limits[]` fallback fixture.
 - **State mapping**: 401 → needsAuth; thrown network error while holding a snapshot →
   stale; success → ok.

@@ -11,7 +11,7 @@ struct DropdownView: View {
                 content(now: ctx.date)
             }
             Divider()
-            Button("Refresh now") { Task { await store.refresh() } }
+            Button("Refresh now") { Task { await store.refresh(trigger: .manual) } }
             // SettingsLink does not surface the window in an LSUIElement app;
             // activate the app first, then open Settings explicitly.
             Button("Settings…") {
@@ -23,8 +23,7 @@ struct DropdownView: View {
         }
         .padding(12)
         .frame(width: 260)
-        // TODO: refresh on NSWorkspace.didWakeNotification (deferred)
-        .task { await store.refresh() }
+        .task { await store.refresh(trigger: .menuOpen) }
     }
 
     @ViewBuilder
@@ -34,6 +33,9 @@ struct DropdownView: View {
             ProgressView("Loading…")
         case .needsAuth:
             Text("Sign in to Claude Code to see usage.")
+                .foregroundStyle(.secondary)
+        case .unavailable(let error):
+            Text(unavailableMessage(error))
                 .foregroundStyle(.secondary)
         case .ok(let snap):
             breakdown(snap, now: now, footer: nil)
@@ -50,9 +52,14 @@ struct DropdownView: View {
             row(title: "5-hour session", percent: snap.session.percent,
                 reset: "resets in \(Format.countdown(to: snap.session.resetsAt, now: now))",
                 severity: snap.session.severity)
-            row(title: "7-day", percent: snap.weekly.percent,
-                reset: resetDate(snap.weekly.resetsAt),
-                severity: snap.weekly.severity)
+            row(title: "7-day - All models", percent: snap.weeklyAll.percent,
+                reset: resetDate(snap.weeklyAll.resetsAt),
+                severity: snap.weeklyAll.severity)
+            ForEach(Array(snap.modelWeekly.enumerated()), id: \.offset) { _, usage in
+                row(title: "7-day - \(usage.displayName)", percent: usage.percent,
+                    reset: usage.resetsAt.map(resetDate) ?? "reset unavailable",
+                    severity: usage.severity)
+            }
             Text("Updated \(Format.countdown(to: now, now: snap.fetchedAt)) ago")
                 .font(.caption2).foregroundStyle(.secondary)
             if let c = snap.credits {
@@ -72,7 +79,7 @@ struct DropdownView: View {
                      color: color(for: Palette.ring(percent: percent, severity: severity)))
                 .frame(width: 22, height: 22)
             VStack(alignment: .leading) {
-                Text("\(title) — \(Int(percent.rounded()))%").font(.subheadline)
+                Text("\(title) — \(Format.percent(percent))%").font(.subheadline)
                 Text(reset).font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -81,5 +88,20 @@ struct DropdownView: View {
     private func resetDate(_ d: Date) -> String {
         let f = DateFormatter(); f.dateFormat = "EEE MMM d"
         return "resets \(f.string(from: d))"
+    }
+
+    private func unavailableMessage(_ error: UsageError) -> String {
+        switch error {
+        case .credentialTimeout, .requestTimeout:
+            return "Keychain access timed out. Try refreshing."
+        case .rateLimited:
+            return "Anthropic rate-limited usage checks. Retrying later."
+        case .noToken, .unauthorized, .forbidden:
+            return "Sign in to Claude Code to see usage."
+        case .cancelled:
+            return "Usage refresh was cancelled."
+        case .credentialAccess, .network, .transport, .httpStatus, .decoding, .responseTooLarge:
+            return "Usage is temporarily unavailable."
+        }
     }
 }

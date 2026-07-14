@@ -4,12 +4,10 @@ set -euo pipefail
 # Creates a stable, self-signed code-signing identity in the login Keychain so that
 # the app's code signature (its "designated requirement") stays constant across rebuilds.
 #
-# Why: the app reads the Claude Code OAuth token from the Keychain. macOS keys the
-# "Always Allow" grant on the app's code signature. Ad-hoc signatures change every build,
-# so the grant never sticks and macOS re-prompts. A stable identity fixes that for good.
+# The app reads its token through /usr/bin/security, so this identity is not required for
+# Keychain access. It only keeps the locally built app's code signature stable.
 #
-# One-time: run this once, then rebuild with ./scripts/make-app.sh and click "Always Allow"
-# a final time. The grant then persists across all future rebuilds.
+# One-time: run this once, then rebuild with ./scripts/make-app.sh.
 #
 # No Apple Developer account required — this is a local self-signed cert. The app stays
 # "unidentified developer" to Gatekeeper (same as with ad-hoc); only the Keychain grant
@@ -72,5 +70,4 @@ echo
 echo "Done. Next:"
 echo "  1) ./scripts/make-app.sh"
 echo "  2) cp -R \"Claude Usage.app\" /Applications/"
-echo "  3) Launch it and click \"Always Allow\" one final time on the Keychain prompt."
-echo "     That grant now survives every future rebuild."
+echo "  3) Launch the app."

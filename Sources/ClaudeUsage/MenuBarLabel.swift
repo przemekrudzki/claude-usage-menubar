@@ -36,7 +36,10 @@ struct MenuBarLabel: View {
     private func rendered() -> NSImage {
         let renderer = ImageRenderer(content: composed)
         renderer.scale = 2
-        guard let cg = renderer.cgImage else { return NSImage() }
+        guard let cg = renderer.cgImage else {
+            return NSImage(systemSymbolName: "chart.donut", accessibilityDescription: "Claude Usage")
+                ?? NSImage(size: NSSize(width: 15, height: 15))
+        }
         let image = NSImage(
             cgImage: cg,
             size: NSSize(width: CGFloat(cg.width) / 2, height: CGFloat(cg.height) / 2)
@@ -48,7 +51,7 @@ struct MenuBarLabel: View {
     @ViewBuilder
     private var composed: some View {
         switch state {
-        case .loading, .needsAuth:
+        case .loading, .needsAuth, .unavailable:
             RingView(percent: 0, color: textColor, filled: false)
                 .frame(width: 15, height: 15)
                 .padding(2)
@@ -63,19 +66,23 @@ struct MenuBarLabel: View {
     private func content(_ snap: UsageSnapshot, dim: Bool) -> some View {
         let ring = Palette.ring(percent: snap.session.percent, severity: snap.session.severity)
         HStack(spacing: 4) {
+            if !showRing && !showSession && !showCountdown && !showWeekly {
+                RingView(percent: 0, color: textColor, filled: false)
+                    .frame(width: 15, height: 15)
+            }
             if showRing {
                 RingView(percent: snap.session.percent, color: color(for: ring))
                     .frame(width: 15, height: 15)
             }
             Group {
                 if showSession {
-                    Text("\(Int(snap.session.percent.rounded()))%")
+                    Text("\(Format.percent(snap.session.percent))%")
                 }
                 if showCountdown {
                     Text(Format.countdown(to: snap.session.resetsAt, now: now))
                 }
                 if showWeekly {
-                    Text("7d \(Int(snap.weekly.percent.rounded()))%")
+                    Text("7d \(Format.percent(snap.weeklyAll.percent))%")
                 }
             }
             .foregroundStyle(textColor)

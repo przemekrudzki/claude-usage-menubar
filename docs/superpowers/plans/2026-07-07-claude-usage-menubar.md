@@ -463,7 +463,8 @@ git commit -m "Add ring color palette (severity + percent thresholds)"
 - Consumes: `UsageSnapshot`, `UsageWindow`, `Credits`, `DateParse`.
 - Produces: `enum UsageParser { static func snapshot(from data: Data, now: Date) throws -> UsageSnapshot }`.
   Parsing rules: session = `limits[]` where `kind == "session"` (fallback `five_hour`);
-  weekly = `limits[]` where `group == "weekly"` with the highest `percent` (fallback `seven_day`);
+  weekly = `limits[]` where `kind == "weekly_all"` (fallback `seven_day`);
+  model-scoped weekly entries are retained separately from `weekly_scoped`;
   credits from `extra_usage` only when `is_enabled == true`. Throws `UsageError.decoding` on
   missing required windows. `now` is stored as `fetchedAt`.
 
@@ -512,9 +513,9 @@ final class UsageParserTests: XCTestCase {
         let snap = try UsageParser.snapshot(from: load("usage_full"), now: now)
         XCTAssertEqual(snap.session.percent, 38)
         XCTAssertEqual(snap.session.severity, "normal")
-        // weekly picks the highest percent in the weekly group (22 > 19)
-        XCTAssertEqual(snap.weekly.percent, 22)
-        XCTAssertEqual(snap.weekly.severity, "warning")
+        // weekly uses the all-model entry; scoped limits are separate
+        XCTAssertEqual(snap.weekly.percent, 19)
+        XCTAssertEqual(snap.weekly.severity, "normal")
         XCTAssertEqual(snap.credits?.used, 12.5)
         XCTAssertEqual(snap.credits?.limit, 5000)
         XCTAssertEqual(snap.credits?.currency, "CAD")

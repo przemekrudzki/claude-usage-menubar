@@ -22,7 +22,8 @@ Two targets, kept deliberately separate:
     (via `/usr/bin/security`, see gotcha 5; `SecItemCopyMatching` only as fallback).
   - `UsageClient` (`UsageFetching`) — HTTP call + error mapping (401 / 429 / network / decode).
   - `Reducer` — pure `(Result, previous) → UsageState` (loading/ok/stale/needsAuth).
-  - `UsageStore` — `@MainActor @Observable`; owns the poll loop + backoff.
+  - `UsageStore` — `@MainActor @Observable`; owns single-flight refresh, watchdog, polling,
+    retry deadlines, and snapshot persistence.
   - `SettingsKeys` / `RefreshInterval` / `MenuBarTextColor` — UserDefaults keys + enums.
 - **`ClaudeUsage`** — the executable: SwiftUI views + `@main` scene + AppKit glue
   (`MenuBarLabel`, `RingView`, `DropdownView`, `SettingsView`, `LoginItem`,
@@ -39,8 +40,9 @@ Headers: `Authorization: Bearer <token>`, `anthropic-beta: oauth-2025-04-20`.
 Token: macOS Keychain generic-password, service **`Claude Code-credentials`**, JSON payload,
 field `claudeAiOauth.accessToken`. Claude Code creates and refreshes it; this app only reads
 it (never manages OAuth). Response has `five_hour`/`seven_day` objects and a richer `limits[]`
-array; parser prefers `limits[]` (weekly = **max** percent across the weekly group), falls
-back to the objects. Credit amounts are in **minor units** — divide `monthly_limit` /
+array. The parser uses `weekly_all` for all-model weekly usage and falls back to `seven_day`;
+`weekly_scoped` entries are shown separately using `scope.model.display_name`. Credit amounts
+are in **minor units** — divide `monthly_limit` /
 `used_credits` by `10^decimal_places` (5000 → $50.00).
 
 ## The gotchas (these each cost real debugging time)
@@ -87,13 +89,13 @@ back to the objects. Credit amounts are in **minor units** — divide `monthly_l
 
 6. **The endpoint rate-limits (HTTP 429) under bursty use.** Rapid rebuild/relaunch/refresh
    cycles (and manual `curl` probes) trip it; a lone request still gets 200. The client maps
-   429 → `UsageError.rateLimited(retryAfter:)`, and `UsageStore` backs off (60–600s, honoring
-   `Retry-After`) instead of hammering. When debugging, **don't** spam the endpoint — you'll
+   429 → `UsageError.rateLimited(retryAfter:)`, and `UsageStore` applies a global bounded
+   retry deadline (up to one hour). When debugging, **don't** spam the endpoint — you'll
    rate-limit the app you're testing.
 
-7. **Refresh triggers.** Polling runs from `.task` on the label (so it starts at launch, since
-   the `.window`-style content view is lazy). Also refreshes on dropdown open, on network
-   reconnect (`ConnectivityMonitor` / `NWPathMonitor`), and on wake (`NSWorkspace.didWakeNotification`).
+7. **Refresh triggers.** `AppRuntime` starts polling from `applicationDidFinishLaunching`,
+   independent of SwiftUI view creation. Dropdown open, reconnect, wake, and manual refresh
+   all enter the same single-flight coordinator; the runtime stops them during termination.
 
 8. **Swift 5 language mode** (tools 5.9). Sendable issues are warnings, not errors, but the
    build is kept warning-free (closures marked `@Sendable`, model types `Sendable`).
@@ -102,8 +104,8 @@ back to the objects. Credit amounts are in **minor units** — divide `monthly_l
 
 ```sh
 swift build                        # compile
-swift run ClaudeUsageCoreTests     # tests (currently 49 checks)
-./scripts/create-signing-cert.sh   # ONE-TIME: stable self-signed identity (durable Keychain grant)
+swift run ClaudeUsageCoreTests     # tests (currently 99 checks)
+./scripts/create-signing-cert.sh   # ONE-TIME: optional stable self-signed identity
 ./scripts/make-app.sh              # build + bundle + sign → "Claude Usage.app"
 cp -R "Claude Usage.app" /Applications/
 ```

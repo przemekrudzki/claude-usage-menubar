@@ -8,4 +8,7 @@ func formatChecks() {
     t.equal(Format.countdown(to: at(13*60), now: at(0)), "13m")
     t.equal(Format.countdown(to: at(30), now: at(0)), "<1m")
     t.equal(Format.countdown(to: at(0), now: at(60)), "now")
+    t.equal(Format.percent(42.6), 43)
+    t.equal(Format.percent(.infinity), 0)
+    t.equal(Format.percent(1e100), 10_000)
 }

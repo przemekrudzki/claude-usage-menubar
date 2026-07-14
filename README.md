@@ -10,7 +10,8 @@ pulled from the same authenticated endpoint.
 Clicking the menu bar item opens a breakdown:
 
 - **5-hour session** — % used and when it resets
-- **7-day** — % used and reset date
+- **7-day - All models** — % used and reset date
+- **7-day - Model** — per-model weekly usage when Anthropic provides it
 - **Extra usage credits** (if enabled on your account)
 - Last-updated indicator + **Refresh now**
 - **Settings…** and **Quit**
@@ -95,13 +96,14 @@ The dropdown always shows the full breakdown regardless of the menu-bar toggles.
   `Claude Code-credentials` (created and kept fresh by Claude Code itself), then calls
   `GET https://api.anthropic.com/api/oauth/usage`.
 - It parses the returned rate-limit windows (`five_hour` / `seven_day` and the richer
-  `limits[]` array), maps them into a small state model, and renders the ring + labels.
+  `limits[]` array). The menu-bar 7-day value always uses the all-model limit, while the
+  dropdown also shows model-scoped weekly limits when available.
 - **It never manages authentication** and never stores or transmits your token anywhere —
   it only reads the token Claude Code already has and sends it to Anthropic's own API,
   exactly as Claude Code does. No telemetry, no third-party servers, no analytics.
-- **Resilient to flaky conditions:** it keeps showing the last-known numbers (dimmed) when
-  offline, refreshes the instant the network returns or the Mac wakes from sleep, and backs
-  off politely (honoring `Retry-After`) if the endpoint rate-limits it (HTTP 429).
+- **Resilient to flaky conditions:** it atomically caches the last-known numbers for offline
+  startup, coalesces overlapping refresh triggers, refreshes when the network returns or the
+  Mac wakes, and applies bounded retry/backoff when the endpoint or network is unavailable.
 
 ## Development
 

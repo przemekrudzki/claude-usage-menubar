@@ -8,50 +8,91 @@ public enum UsageParser {
         let limits = root["limits"] as? [[String: Any]] ?? []
 
         let session = try window(
-            fromLimits: limits.first { ($0["kind"] as? String) == "session" },
+            fromLimits: limits.filter { ($0["kind"] as? String) == "session" },
             fallbackObject: root["five_hour"] as? [String: Any],
             label: "session"
         )
 
-        let weeklyEntries = limits.filter { ($0["group"] as? String) == "weekly" }
-        let topWeekly = weeklyEntries.max { percent($0) < percent($1) }
-        let weekly = try window(
-            fromLimits: topWeekly,
+        let weeklyAll = try window(
+            fromLimits: limits.filter { ($0["kind"] as? String) == "weekly_all" },
             fallbackObject: root["seven_day"] as? [String: Any],
             label: "weekly"
         )
+        let modelWeekly = parseModelWeekly(limits)
 
         let credits = parseCredits(root["extra_usage"] as? [String: Any])
-        return UsageSnapshot(session: session, weekly: weekly, credits: credits, fetchedAt: now)
+        return UsageSnapshot(session: session, weeklyAll: weeklyAll,
+                             modelWeekly: modelWeekly, credits: credits, fetchedAt: now)
     }
 
-    private static func percent(_ e: [String: Any]) -> Double {
-        (e["percent"] as? NSNumber)?.doubleValue ?? 0
+    private static func number(_ value: Any?) -> Double? {
+        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
+        let result = number.doubleValue
+        return result.isFinite && result >= 0 && result <= 10_000 ? result : nil
     }
 
-    private static func window(fromLimits limit: [String: Any]?,
+    private static func amount(_ value: Any?) -> Double? {
+        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
+        let result = number.doubleValue
+        return result.isFinite && result >= 0 ? result : nil
+    }
+
+    private static func window(fromLimits limits: [[String: Any]],
                                fallbackObject fallback: [String: Any]?,
                                label: String) throws -> UsageWindow {
-        if let l = limit,
-           let resetStr = l["resets_at"] as? String, let reset = DateParse.iso(resetStr) {
-            let pct = (l["percent"] as? NSNumber)?.doubleValue ?? 0
-            let sev = (l["severity"] as? String) ?? "normal"
+        let parsed = limits.compactMap { limit -> UsageWindow? in
+            guard let pct = number(limit["percent"]),
+                  let resetStr = limit["resets_at"] as? String,
+                  let reset = DateParse.iso(resetStr) else { return nil }
+            let sev = (limit["severity"] as? String) ?? "normal"
             return UsageWindow(percent: pct, resetsAt: reset, severity: sev)
         }
+        if let result = parsed.max(by: { $0.percent < $1.percent }) {
+            return result
+        }
         if let f = fallback,
-           let util = (f["utilization"] as? NSNumber)?.doubleValue,
+           let util = number(f["utilization"]),
            let resetStr = f["resets_at"] as? String, let reset = DateParse.iso(resetStr) {
             return UsageWindow(percent: util, resetsAt: reset, severity: "normal")
         }
         throw UsageError.decoding("missing \(label) window")
     }
 
+    private static func parseModelWeekly(_ limits: [[String: Any]]) -> [ModelWeeklyUsage] {
+        var seen = Set<String>()
+        var result: [ModelWeeklyUsage] = []
+
+        for limit in limits where (limit["kind"] as? String) == "weekly_scoped" {
+            if let group = limit["group"] as? String, group != "weekly" { continue }
+            guard let pct = number(limit["percent"]),
+                  let scope = limit["scope"] as? [String: Any],
+                  let model = scope["model"] as? [String: Any],
+                  let rawName = model["display_name"] as? String else { continue }
+
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { continue }
+            let rawID = (model["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelID = rawID.flatMap { $0.isEmpty ? nil : $0 }
+            let key = modelID.map { "id:\($0.lowercased())" } ?? "name:\(name.lowercased())"
+            guard seen.insert(key).inserted else { continue }
+
+            let reset = (limit["resets_at"] as? String).flatMap(DateParse.iso)
+            let sev = (limit["severity"] as? String) ?? "normal"
+            result.append(ModelWeeklyUsage(modelID: modelID, displayName: name,
+                                           percent: pct, resetsAt: reset, severity: sev))
+        }
+        return result
+    }
+
     private static func parseCredits(_ e: [String: Any]?) -> Credits? {
         guard let e, (e["is_enabled"] as? Bool) == true else { return nil }
-        let usedRaw = (e["used_credits"] as? NSNumber)?.doubleValue ?? 0
-        let limitRaw = (e["monthly_limit"] as? NSNumber)?.doubleValue ?? 0
+        guard let usedRaw = amount(e["used_credits"]),
+              let limitRaw = amount(e["monthly_limit"]),
+              let placesNumber = number(e["decimal_places"]),
+              placesNumber.rounded() == placesNumber,
+              (0...6).contains(Int(placesNumber)) else { return nil }
         let currency = (e["currency"] as? String) ?? "USD"
-        let places = (e["decimal_places"] as? NSNumber)?.intValue ?? 2
+        let places = Int(placesNumber)
         // Amounts arrive in minor units (e.g. cents): 5000 with decimal_places 2 = 50.00.
         let scale = pow(10.0, Double(places))
         return Credits(used: usedRaw / scale, limit: limitRaw / scale,

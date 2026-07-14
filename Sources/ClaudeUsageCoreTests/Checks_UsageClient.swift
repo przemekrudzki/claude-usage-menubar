@@ -4,6 +4,8 @@ import ClaudeUsageCore
 final class StubURLProtocol: URLProtocol {
     nonisolated(unsafe) static var status = 200
     nonisolated(unsafe) static var body = Data()
+    nonisolated(unsafe) static var headers: [String: String] = [:]
+    nonisolated(unsafe) static var capturedRequest: URLRequest?
     static func session() -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
@@ -12,7 +14,9 @@ final class StubURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let resp = HTTPURLResponse(url: request.url!, statusCode: Self.status, httpVersion: nil, headerFields: nil)!
+        Self.capturedRequest = request
+        let resp = HTTPURLResponse(url: request.url!, statusCode: Self.status,
+                                   httpVersion: nil, headerFields: Self.headers)!
         client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Self.body)
         client?.urlProtocolDidFinishLoading(self)
@@ -31,14 +35,19 @@ func usageClientChecks() async {
     t.equal(await c2.fetch(), .failure(.unauthorized))
 
     StubURLProtocol.status = 200
-    StubURLProtocol.body = Data(#"{"limits":[{"kind":"session","group":"session","percent":40,"severity":"normal","resets_at":"2026-07-07T19:40:00+00:00"},{"kind":"weekly_all","group":"weekly","percent":20,"severity":"normal","resets_at":"2026-07-11T08:00:00+00:00"}],"extra_usage":{"is_enabled":false}}"#.utf8)
+    StubURLProtocol.body = Data(#"{"limits":[{"kind":"session","group":"session","percent":40,"severity":"normal","resets_at":"2026-07-07T19:40:00+00:00"},{"kind":"weekly_all","group":"weekly","percent":20,"severity":"normal","resets_at":"2026-07-11T08:00:00+00:00"},{"kind":"weekly_scoped","group":"weekly","percent":30,"severity":"warning","resets_at":"2026-07-11T08:00:00+00:00","scope":{"model":{"id":"fable","display_name":"Fable"}}}],"extra_usage":{"is_enabled":false}}"#.utf8)
     let c3 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
     if case .success(let snap) = await c3.fetch() {
         t.equal(snap.session.percent, 40)
-        t.equal(snap.weekly.percent, 20)
+        t.equal(snap.weeklyAll.percent, 20)
+        t.equal(snap.modelWeekly.first?.displayName, "Fable")
+        t.equal(snap.modelWeekly.first?.percent, 30)
     } else {
         t.expect(false, "expected success")
     }
+    t.equal(StubURLProtocol.capturedRequest?.httpMethod, "GET")
+    t.equal(StubURLProtocol.capturedRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+    t.equal(StubURLProtocol.capturedRequest?.value(forHTTPHeaderField: "anthropic-beta"), "oauth-2025-04-20")
 
     StubURLProtocol.status = 200
     StubURLProtocol.body = Data("{}".utf8)
@@ -51,10 +60,23 @@ func usageClientChecks() async {
 
     StubURLProtocol.status = 429
     StubURLProtocol.body = Data("rate limited".utf8)
+    StubURLProtocol.headers = ["Retry-After": "300"]
     let c5 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
-    if case .failure(.rateLimited) = await c5.fetch() {
-        t.expect(true, "rate-limited path")
-    } else {
-        t.expect(false, "expected .rateLimited failure on HTTP 429")
-    }
+    t.equal(await c5.fetch(), .failure(.rateLimited(retryAfter: 300)))
+
+    StubURLProtocol.headers = ["Retry-After": "Thu, 01 Jan 1970 00:18:20 GMT"]
+    let c6 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session(),
+                         now: { Date(timeIntervalSince1970: 1000) })
+    t.equal(await c6.fetch(), .failure(.rateLimited(retryAfter: 100)))
+
+    StubURLProtocol.status = 403
+    StubURLProtocol.headers = [:]
+    let c7 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
+    t.equal(await c7.fetch(), .failure(.forbidden))
+
+    StubURLProtocol.status = 200
+    StubURLProtocol.body = Data("oversized".utf8)
+    let c8 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session(),
+                         maxResponseBytes: 3)
+    t.equal(await c8.fetch(), .failure(.responseTooLarge))
 }
