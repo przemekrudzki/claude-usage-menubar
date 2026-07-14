@@ -6,23 +6,17 @@ struct DropdownView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+        TimelineView(.periodic(from: .now, by: store.nextRetryAt == nil ? 60 : 1)) { ctx in
+            VStack(alignment: .leading, spacing: 10) {
                 content(now: ctx.date)
+                Divider()
+                refreshFooter(now: ctx.date)
+                Divider()
+                actions
             }
-            Divider()
-            Button("Refresh now") { Task { await store.refresh(trigger: .manual) } }
-            // SettingsLink does not surface the window in an LSUIElement app;
-            // activate the app first, then open Settings explicitly.
-            Button("Settings…") {
-                NSApplication.shared.activate(ignoringOtherApps: true)
-                openSettings()
-            }
-            Divider()
-            Button("Quit") { NSApplication.shared.terminate(nil) }
+            .padding(12)
+            .frame(width: 292)
         }
-        .padding(12)
-        .frame(width: 260)
         .task { await store.refresh(trigger: .menuOpen) }
     }
 
@@ -30,78 +24,304 @@ struct DropdownView: View {
     private func content(now: Date) -> some View {
         switch store.state {
         case .loading:
-            ProgressView("Loading…")
+            stateMessage(
+                title: "Loading usage",
+                detail: "Reading your current Claude usage.",
+                systemImage: "chart.donut",
+                showsProgress: true
+            )
         case .needsAuth:
-            Text("Sign in to Claude Code to see usage.")
-                .foregroundStyle(.secondary)
+            stateMessage(
+                title: "Sign in to Claude Code",
+                detail: "Complete sign-in in Terminal, then refresh.",
+                systemImage: "person.crop.circle.badge.exclamationmark"
+            )
         case .unavailable(let error):
-            Text(unavailableMessage(error))
-                .foregroundStyle(.secondary)
+            let message = unavailableMessage(error, now: now)
+            stateMessage(title: message.title, detail: message.detail,
+                         systemImage: message.systemImage)
         case .ok(let snap):
-            breakdown(snap, now: now, footer: nil)
+            breakdown(snap, now: now, cachedSince: nil)
         case .stale(let snap, let since):
-            breakdown(snap, now: now,
-                      footer: "stale · couldn't reach Anthropic (\(Format.countdown(to: now, now: since)) ago)")
-                .opacity(0.6)
+            breakdown(snap, now: now, cachedSince: since)
         }
     }
 
     @ViewBuilder
-    private func breakdown(_ snap: UsageSnapshot, now: Date, footer: String?) -> some View {
+    private func breakdown(_ snap: UsageSnapshot, now: Date, cachedSince: Date?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             row(title: "5-hour session", percent: snap.session.percent,
                 reset: "resets in \(Format.countdown(to: snap.session.resetsAt, now: now))",
-                severity: snap.session.severity)
-            row(title: "7-day - All models", percent: snap.weeklyAll.percent,
+                severity: snap.session.severity, isPrimary: true)
+
+            Divider()
+
+            row(title: "7-day, all models", percent: snap.weeklyAll.percent,
                 reset: resetDate(snap.weeklyAll.resetsAt),
                 severity: snap.weeklyAll.severity)
-            ForEach(Array(snap.modelWeekly.enumerated()), id: \.offset) { _, usage in
-                row(title: "7-day - \(usage.displayName)", percent: usage.percent,
+
+            if !snap.modelWeekly.isEmpty {
+                Text("Model limits")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                if snap.modelWeekly.count > 3 {
+                    ScrollView {
+                        modelRows(snap.modelWeekly)
+                    }
+                    .frame(maxHeight: 150)
+                } else {
+                    modelRows(snap.modelWeekly)
+                }
+            }
+
+            if let c = snap.credits {
+                Divider()
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("Extra usage")
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Text("\(creditAmount(c.used, credits: c)) / \(creditAmount(c.limit, credits: c))")
+                        .monospacedDigit()
+                }
+                .font(.caption)
+            }
+
+            if cachedSince != nil {
+                Label(cachedStatus(now: now), systemImage: "clock.arrow.circlepath")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel(cachedStatus(now: now))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func modelRows(_ usages: [ModelWeeklyUsage]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(usages.enumerated()), id: \.offset) { _, usage in
+                row(title: usage.displayName, percent: usage.percent,
                     reset: usage.resetsAt.map(resetDate) ?? "reset unavailable",
                     severity: usage.severity)
             }
-            Text("Updated \(Format.countdown(to: now, now: snap.fetchedAt)) ago")
-                .font(.caption2).foregroundStyle(.secondary)
-            if let c = snap.credits {
-                Text(String(format: "Extra credits: %.\(c.decimalPlaces)f / %.\(c.decimalPlaces)f %@",
-                            c.used, c.limit, c.currency))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if let footer {
-                Text(footer).font(.caption2).foregroundStyle(.secondary)
-            }
         }
     }
 
-    private func row(title: String, percent: Double, reset: String, severity: String) -> some View {
-        HStack(spacing: 8) {
+    private func row(title: String, percent: Double, reset: String,
+                     severity: String, isPrimary: Bool = false) -> some View {
+        HStack(alignment: .center, spacing: 10) {
             RingView(percent: percent,
-                     color: color(for: Palette.ring(percent: percent, severity: severity)))
-                .frame(width: 22, height: 22)
-            VStack(alignment: .leading) {
-                Text("\(title) — \(Format.percent(percent))%").font(.subheadline)
-                Text(reset).font(.caption).foregroundStyle(.secondary)
+                     color: color(for: Palette.ring(percent: percent, severity: severity)),
+                     lineWidth: isPrimary ? 3 : 2.5)
+                .frame(width: isPrimary ? 24 : 22, height: isPrimary ? 24 : 22)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(isPrimary ? .subheadline.weight(.semibold) : .subheadline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(reset)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+
+            Spacer(minLength: 8)
+
+            Text("\(Format.percent(percent))%")
+                .font(isPrimary ? .title3.weight(.semibold) : .body.weight(.medium))
+                .monospacedDigit()
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(Format.percent(percent)) percent, \(severityDescription(percent: percent, severity: severity)), \(reset)")
     }
 
     private func resetDate(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "EEE MMM d"
-        return "resets \(f.string(from: d))"
+        "resets \(d.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day()))"
     }
 
-    private func unavailableMessage(_ error: UsageError) -> String {
+    private func creditAmount(_ value: Double, credits: Credits) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = credits.currency
+        formatter.minimumFractionDigits = credits.decimalPlaces
+        formatter.maximumFractionDigits = credits.decimalPlaces
+        return formatter.string(from: NSNumber(value: value))
+            ?? String(format: "%.\(credits.decimalPlaces)f %@", value, credits.currency)
+    }
+
+    private func cachedStatus(now: Date) -> String {
+        if store.isRefreshing { return "Showing cached usage while refreshing" }
+        guard let error = store.lastError else { return "Showing cached usage" }
         switch error {
-        case .credentialTimeout, .requestTimeout:
-            return "Keychain access timed out. Try refreshing."
         case .rateLimited:
-            return "Anthropic rate-limited usage checks. Retrying later."
+            if let retry = retryText(now: now) {
+                return "Showing cached usage; \(retry.lowercased())"
+            }
+            return "Showing cached usage; temporarily rate-limited"
         case .noToken, .unauthorized, .forbidden:
-            return "Sign in to Claude Code to see usage."
+            return "Showing cached usage; sign-in required"
+        case .network, .transport:
+            return "Showing cached usage; currently offline"
+        case .credentialTimeout:
+            return "Showing cached usage; Keychain access timed out"
+        case .requestTimeout:
+            return "Showing cached usage; refresh timed out"
+        case .credentialAccess:
+            return "Showing cached usage; credentials unavailable"
+        case .httpStatus, .decoding, .responseTooLarge:
+            return "Showing cached usage; last refresh failed"
         case .cancelled:
-            return "Usage refresh was cancelled."
-        case .credentialAccess, .network, .transport, .httpStatus, .decoding, .responseTooLarge:
-            return "Usage is temporarily unavailable."
+            return "Showing cached usage"
+        }
+    }
+
+    private func unavailableMessage(_ error: UsageError, now: Date)
+        -> (title: String, detail: String, systemImage: String) {
+        switch error {
+        case .credentialTimeout:
+            return ("Keychain unavailable", "Reading Claude Code credentials timed out.",
+                    "key.horizontal")
+        case .requestTimeout:
+            return ("Refresh timed out", "The usage service did not respond in time.",
+                    "clock.badge.exclamationmark")
+        case .rateLimited:
+            return ("Temporarily rate-limited",
+                    retryText(now: now) ?? "Claude Usage will retry automatically.",
+                    "hourglass")
+        case .noToken, .unauthorized, .forbidden:
+            return ("Sign in to Claude Code", "Complete sign-in in Terminal, then refresh.",
+                    "person.crop.circle.badge.exclamationmark")
+        case .cancelled:
+            return ("Refresh cancelled", "Try refreshing again.", "xmark.circle")
+        case .credentialAccess:
+            return ("Credentials unavailable", "Claude Code credentials could not be read.",
+                    "key.horizontal")
+        case .network, .transport:
+            return ("Can't refresh usage", "Check your internet connection and try again.",
+                    "wifi.exclamationmark")
+        case .httpStatus:
+            return ("Usage service unavailable", "Claude Usage will retry automatically.",
+                    "exclamationmark.icloud")
+        case .decoding, .responseTooLarge:
+            return ("Unexpected response", "The usage service returned unsupported data.",
+                    "exclamationmark.triangle")
+        }
+    }
+
+    @ViewBuilder
+    private func stateMessage(title: String, detail: String, systemImage: String,
+                              showsProgress: Bool = false) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if showsProgress {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: systemImage)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private func refreshFooter(now: Date) -> some View {
+        HStack(spacing: 8) {
+            if let snapshot = displayedSnapshot {
+                Text(lastUpdatedText(snapshot.fetchedAt, now: now))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if let retry = retryText(now: now) {
+                Text(retry)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                Task { await store.refresh(trigger: .manual) }
+            } label: {
+                HStack(spacing: 5) {
+                    if store.isRefreshing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: refreshBlocked(now: now) ? "clock" : "arrow.clockwise")
+                    }
+                    Text(refreshButtonTitle(now: now))
+                }
+            }
+            .controlSize(.small)
+            .disabled(store.isRefreshing || refreshBlocked(now: now))
+            .keyboardShortcut("r", modifiers: .command)
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button {
+                // SettingsLink does not surface the window in an LSUIElement app.
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                openSettings()
+            } label: {
+                Label("Settings…", systemImage: "gearshape")
+            }
+            .keyboardShortcut(",", modifiers: .command)
+
+            Spacer()
+
+            Button("Quit") { NSApplication.shared.terminate(nil) }
+                .keyboardShortcut("q", modifiers: .command)
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+    }
+
+    private var displayedSnapshot: UsageSnapshot? {
+        switch store.state {
+        case .ok(let snapshot), .stale(let snapshot, _): return snapshot
+        case .loading, .needsAuth, .unavailable: return nil
+        }
+    }
+
+    private func refreshBlocked(now: Date) -> Bool {
+        guard let retryAt = store.nextRetryAt else { return false }
+        return retryAt > now
+    }
+
+    private func refreshButtonTitle(now: Date) -> String {
+        if store.isRefreshing { return "Refreshing" }
+        if let retryAt = store.nextRetryAt, retryAt > now {
+            return "Retry in \(Format.countdown(to: retryAt, now: now))"
+        }
+        return "Refresh"
+    }
+
+    private func retryText(now: Date) -> String? {
+        guard let retryAt = store.nextRetryAt, retryAt > now else { return nil }
+        return "Retrying in \(Format.countdown(to: retryAt, now: now))"
+    }
+
+    private func lastUpdatedText(_ date: Date, now: Date) -> String {
+        if now.timeIntervalSince(date) < 60 { return "Updated just now" }
+        return "Updated \(Format.countdown(to: now, now: date)) ago"
+    }
+
+    private func severityDescription(percent: Double, severity: String) -> String {
+        switch Palette.ring(percent: percent, severity: severity) {
+        case .green: return "within limit"
+        case .amber: return "approaching limit"
+        case .red: return "at or near limit"
         }
     }
 }
