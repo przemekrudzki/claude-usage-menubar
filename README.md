@@ -41,7 +41,7 @@ glance whether you're about to get rate-limited or you're fine.
 git clone https://github.com/przemekrudzki/claude-usage-menubar.git
 cd claude-usage-menubar
 ./scripts/make-app.sh
-cp -R "Claude Usage.app" /Applications/
+ditto "Claude Usage.app" "/Applications/Claude Usage.app"
 open "/Applications/Claude Usage.app"
 ```
 
@@ -49,26 +49,45 @@ open "/Applications/Claude Usage.app"
 "accessory" app with no Dock icon), and signs it for personal use — with your stable
 self-signed identity if you've made one (see below), otherwise ad-hoc.
 
+After launching, look for the usage indicator on the right side of the menu bar. The app
+does not open a regular window or appear in the Dock. Use the menu-bar dropdown to refresh,
+open Settings, or quit.
+
 ### First launch
 
 1. **No Keychain prompt expected** — the app reads your token through Apple's
    `/usr/bin/security` tool, the same one Claude Code uses to store it, which is already
    authorized for the **"Claude Code-credentials"** Keychain item. If macOS ever does ask
    anyway, click **Always Allow**.
-2. **Launch at login** — enabled automatically on first run, so it comes back after a
-   reboot. Toggle it anytime in **Settings**.
+2. **Launch at login** — requested automatically on first run so the app comes back after a
+   reboot. macOS may ask you to approve it in **System Settings → General → Login Items**.
+   Toggle it anytime in the app's **Settings**.
 
 If the numbers don't appear, make sure you're signed into Claude Code (run `claude` once
 and confirm it works), then choose **Refresh now** from the dropdown.
 
+### Updating
+
+Quit Claude Usage from its menu-bar dropdown before replacing it, then run:
+
+```sh
+git pull
+./scripts/make-app.sh
+ditto "Claude Usage.app" "/Applications/Claude Usage.app"
+open "/Applications/Claude Usage.app"
+```
+
+Your display preferences and launch-at-login setting are preserved. The app may initially
+show its cached last-known usage while it fetches current data.
+
 ### Why rebuilds don't re-prompt for the Keychain
 
-The app never calls the Keychain API for the token directly — a per-app grant would be
+The app does not call the Keychain API for the token during normal operation — a per-app grant would be
 keyed on the build's code signature (its cdhash, since a personal build has no Team ID)
 and would break on **every rebuild**. Instead it shells out to `/usr/bin/security
 find-generic-password`, an Apple tool that Claude Code itself uses to create the item and
-that is therefore permanently on the item's access list. No prompt, no matter how often
-you rebuild.
+that is therefore already authorized for the item. Rebuilding the app does not create a
+new per-app Keychain grant.
 
 Optionally, `./scripts/create-signing-cert.sh` (one-time) creates a stable local
 self-signed identity so `make-app.sh` produces a consistent code signature across builds —
@@ -90,17 +109,51 @@ Open with **⌘,** or **Settings…** in the dropdown:
 
 The dropdown always shows the full breakdown regardless of the menu-bar toggles.
 
+## Troubleshooting
+
+- **No menu-bar item:** run `open "/Applications/Claude Usage.app"`. The app has no Dock
+  icon, so no other window appears when it starts.
+- **"Sign in to Claude Code":** open Terminal, run `claude`, and complete sign-in. Then use
+  **Refresh now** in Claude Usage.
+- **Usage temporarily unavailable:** confirm the Mac is online and wait for the next retry.
+  The app deliberately backs off after network, server, or rate-limit failures.
+- **Launch at login needs approval:** enable Claude Usage under **System Settings → General
+  → Login Items**, then reopen the app's Settings to confirm the current status.
+- **Still not working:** quit and reopen the app. Diagnostic logs are available with:
+
+  ```sh
+  log show --last 10m --style compact \
+    --predicate 'subsystem == "com.przemek.ClaudeUsageMenuBar"'
+  ```
+
+The app never logs the OAuth token or response body.
+
+## Uninstall
+
+First disable **Launch at login** in the app's Settings, then quit the app and remove it:
+
+```sh
+rm -rf "/Applications/Claude Usage.app"
+```
+
+To also remove preferences and the cached usage snapshot:
+
+```sh
+defaults delete com.przemek.ClaudeUsageMenuBar
+rm -rf "$HOME/Library/Application Support/ClaudeUsage"
+```
+
 ## How it works
 
-- On each poll it reads the current OAuth access token from the macOS Keychain item
+- On each refresh it reads the current OAuth access token from the macOS Keychain item
   `Claude Code-credentials` (created and kept fresh by Claude Code itself), then calls
   `GET https://api.anthropic.com/api/oauth/usage`.
 - It parses the returned rate-limit windows (`five_hour` / `seven_day` and the richer
   `limits[]` array). The menu-bar 7-day value always uses the all-model limit, while the
   dropdown also shows model-scoped weekly limits when available.
-- **It never manages authentication** and never stores or transmits your token anywhere —
-  it only reads the token Claude Code already has and sends it to Anthropic's own API,
-  exactly as Claude Code does. No telemetry, no third-party servers, no analytics.
+- **It never manages authentication or persists your token** — it only reads the token
+  Claude Code already has and sends it to Anthropic's own API, exactly as Claude Code does.
+  No telemetry, no third-party servers, no analytics.
 - **Resilient to flaky conditions:** it atomically caches the last-known numbers for offline
   startup, coalesces overlapping refresh triggers, refreshes when the network returns or the
   Mac wakes, and applies bounded retry/backoff when the endpoint or network is unavailable.
@@ -121,8 +174,8 @@ only the Command Line Tools installed.
 
 ```
 Sources/
-  ClaudeUsageCore/       parsing, Keychain read, HTTP client, polling store (pure, tested)
-  ClaudeUsage/           SwiftUI views + @main MenuBarExtra scene
+  ClaudeUsageCore/       parsing, Keychain/HTTP clients, refresh coordinator, snapshot cache
+  ClaudeUsage/           SwiftUI views, MenuBarExtra scene, application lifecycle
   ClaudeUsageCoreTests/  hand-rolled TestKit harness + checks + fixtures
 scripts/                 Info.plist + make-app.sh (bundle + sign) + create-signing-cert.sh
 docs/                    design spec, implementation plan, and NOTES.md
@@ -135,8 +188,8 @@ the gotchas worth knowing before changing anything.
 
 - The `/api/oauth/usage` endpoint is **not a documented public API**. It's the same one
   Claude Code uses internally, but Anthropic could change it at any time and break this app.
-- Distributed as source only. The app is **ad-hoc signed**, not notarized — you build and
-  sign it locally, which is why Gatekeeper doesn't complain about your own build.
+- Distributed as source only. The app is **locally signed**, not notarized — ad hoc by
+  default, or with the optional self-signed identity described above.
 - The token is read via `/usr/bin/security` rather than the Keychain API, so rebuilding
   or updating the app does **not** re-trigger the macOS Keychain permission prompt — see
   [Why rebuilds don't re-prompt for the Keychain](#why-rebuilds-dont-re-prompt-for-the-keychain).

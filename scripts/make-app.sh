@@ -28,7 +28,7 @@ if security find-identity -v -p codesigning | grep -qF "$IDENTITY"; then
   echo "Signing with stable identity '$IDENTITY'…"
   codesign --force --deep --sign "$IDENTITY" "$NEW_APP"
 else
-  echo "Ad-hoc signing (run ./scripts/create-signing-cert.sh once for a durable Keychain grant)…"
+  echo "Ad-hoc signing (run ./scripts/create-signing-cert.sh for an optional stable signature)…"
   codesign --force --deep --sign - "$NEW_APP"
 fi
 
@@ -38,4 +38,4 @@ mv "$NEW_APP" "$APP"
 rm -rf "$OLD_APP"
 
 echo "Done: $APP"
-echo "Install with:  cp -R \"$APP\" /Applications/  (then launch it once)"
+echo "Install with:  ditto \"$APP\" \"/Applications/$APP\"  (then launch it once)"
