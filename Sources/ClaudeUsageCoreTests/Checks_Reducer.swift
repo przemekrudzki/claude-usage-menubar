@@ -22,4 +22,9 @@ func reducerChecks() {
     t.equal(Reducer.map(.failure(.rateLimited(retryAfter: nil)), previous: .loading, now: now),
             .unavailable(.rateLimited(retryAfter: nil)))
     t.equal(Reducer.map(.failure(.cancelled), previous: .ok(snap(10)), now: now), .ok(snap(10)))
+    // an expired token keeps its own state so the dropdown can say what to do about it
+    t.equal(Reducer.map(.failure(.tokenExpired), previous: .loading, now: now),
+            .unavailable(.tokenExpired))
+    t.equal(Reducer.map(.failure(.tokenExpired), previous: .ok(snap(10)), now: now),
+            .stale(snap(10), since: now))
 }

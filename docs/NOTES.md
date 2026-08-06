@@ -18,8 +18,9 @@ Two targets, kept deliberately separate:
   - `Format` — countdown ("2h 13m", "<1m", "now").
   - `Palette` — percent + API `severity` → `RingColor` (green/amber/red).
   - `UsageParser` — decodes `/api/oauth/usage` JSON → `UsageSnapshot`.
-  - `KeychainReader` — reads the token; pure `token(fromJSON:)` + `readToken()` I/O
-    (via `/usr/bin/security`, see gotcha 5; `SecItemCopyMatching` only as fallback).
+  - `KeychainReader` — reads the token **and its expiry** as a `ClaudeCredential`; pure
+    `credential(fromJSON:)` + `readCredential()` I/O (via `/usr/bin/security`, see gotcha 5;
+    `SecItemCopyMatching` only as fallback).
   - `UsageClient` (`UsageFetching`) — HTTP call + error mapping (401 / 429 / network / decode).
   - `Reducer` — pure `(Result, previous) → UsageState` (loading/ok/stale/needsAuth).
   - `UsageStore` — `@MainActor @Observable`; owns single-flight refresh, watchdog, polling,
@@ -38,8 +39,9 @@ render off `store.state`.
 `GET https://api.anthropic.com/api/oauth/usage`
 Headers: `Authorization: Bearer <token>`, `anthropic-beta: oauth-2025-04-20`.
 Token: macOS Keychain generic-password, service **`Claude Code-credentials`**, JSON payload,
-field `claudeAiOauth.accessToken`. Claude Code creates and refreshes it; this app only reads
-it (never manages OAuth). Response has `five_hour`/`seven_day` objects and a richer `limits[]`
+fields `claudeAiOauth.accessToken` and `claudeAiOauth.expiresAt`. Claude Code creates and
+refreshes it; this app only reads it (never manages OAuth) and skips the request outright
+once `expiresAt` has passed — see gotcha 7. Response has `five_hour`/`seven_day` objects and a richer `limits[]`
 array. The parser uses `weekly_all` for all-model weekly usage and falls back to `seven_day`;
 `weekly_scoped` entries are shown separately using `scope.model.display_name`. Credit amounts
 are in **minor units** — divide `monthly_limit` /
@@ -89,15 +91,32 @@ are in **minor units** — divide `monthly_limit` /
 
 6. **The endpoint rate-limits (HTTP 429) under bursty use.** Rapid rebuild/relaunch/refresh
    cycles (and manual `curl` probes) trip it; a lone request still gets 200. The client maps
-   429 → `UsageError.rateLimited(retryAfter:)`, and `UsageStore` applies a global bounded
-   retry deadline (up to one hour). When debugging, **don't** spam the endpoint — you'll
-   rate-limit the app you're testing.
+   429 → `UsageError.rateLimited(retryAfter:)`. `UsageStore` honours `Retry-After` but probes
+   under it on a doubling ceiling (2m, 4m, 8m, 16m, 32m, then the server's figure), because a
+   lockout usually clears the moment a fresh token is in play and sitting out the full hour
+   just leaves the menu bar showing day-old numbers. `Retry-After: 0` gets a 30s floor —
+   without one it becomes a poll-rate spin loop. A **manual** refresh always overrides the
+   backoff (one deliberate request can't stampede); automatic triggers stay gated. When
+   debugging, **don't** spam the endpoint — you'll rate-limit the app you're testing.
 
-7. **Refresh triggers.** `AppRuntime` starts polling from `applicationDidFinishLaunching`,
+7. **An expired access token is what actually caused the "stuck on cached data" bug.**
+   Claude Code refreshes `claudeAiOauth.accessToken` only when it *runs*, so after an idle
+   night the stored token is dead. The app used to send it on every 60s poll: three 401s in
+   a row earned a 429 with `Retry-After: 3600`, and the dropdown sat on 10-hour-old numbers
+   saying "retrying in 48m" — every single morning. `KeychainReader` now also reads
+   `claudeAiOauth.expiresAt` (**milliseconds** since the epoch; seconds and junk are handled),
+   and `UsageClient` fails fast with `UsageError.tokenExpired` **without making a request**.
+   That error carries no backoff — the check is a local Keychain read — so polling continues
+   (at ≤30s) and the app recovers on its own within half a minute of the user running Claude
+   Code. A genuine 401/403 (token rejected despite looking live) now backs off 2m → 30m
+   instead of hammering. Do **not** "fix" this by refreshing the OAuth token here: refresh
+   tokens rotate, and racing Claude Code for one would sign the user out of Claude Code.
+
+8. **Refresh triggers.** `AppRuntime` starts polling from `applicationDidFinishLaunching`,
    independent of SwiftUI view creation. Dropdown open, reconnect, wake, and manual refresh
    all enter the same single-flight coordinator; the runtime stops them during termination.
 
-8. **Swift 5 language mode** (tools 5.9). Sendable issues are warnings, not errors, but the
+9. **Swift 5 language mode** (tools 5.9). Sendable issues are warnings, not errors, but the
    build is kept warning-free (closures marked `@Sendable`, model types `Sendable`).
 
 ## Build / run / test

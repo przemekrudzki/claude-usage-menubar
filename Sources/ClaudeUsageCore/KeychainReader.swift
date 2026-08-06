@@ -133,22 +133,69 @@ private final class SecurityProcessOperation: @unchecked Sendable {
     }
 }
 
+/// The Claude Code OAuth credential as stored in the Keychain. Claude Code owns the
+/// refresh cycle; this app only reads what is there and reports when it has gone stale.
+public struct ClaudeCredential: Equatable, Sendable {
+    public let token: String
+    /// Absent when Claude Code stores no (or an implausible) `expiresAt`.
+    public let expiresAt: Date?
+
+    public init(token: String, expiresAt: Date? = nil) {
+        self.token = token
+        self.expiresAt = expiresAt
+    }
+
+    /// True once the token is at, or within `skew` of, its expiry.
+    ///
+    /// Sending an expired token is not merely useless: three rejected requests in a
+    /// row earn an hour-long 429 lockout from the API, which is exactly how this app
+    /// used to end up stuck on cached data all day. Checking locally costs nothing.
+    public func isExpired(now: Date, skew: TimeInterval = 60) -> Bool {
+        guard let expiresAt else { return false }
+        return expiresAt.timeIntervalSince(now) <= skew
+    }
+}
+
 public enum KeychainReader {
     static let service = "Claude Code-credentials"
 
     public static func token(fromJSON data: Data) throws -> String {
+        try credential(fromJSON: data).token
+    }
+
+    public static func credential(fromJSON data: Data) throws -> ClaudeCredential {
         guard
             let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let oauth = root["claudeAiOauth"] as? [String: Any],
             let token = oauth["accessToken"] as? String,
             !token.isEmpty
         else { throw UsageError.noToken }
-        return token
+        return ClaudeCredential(token: token, expiresAt: expiry(from: oauth["expiresAt"]))
+    }
+
+    /// Claude Code writes `expiresAt` as milliseconds since the epoch. Seconds are
+    /// accepted too, and anything not plausibly a date is discarded rather than
+    /// treated as an expiry in 1970 — a bad parse must never brick the app.
+    static func expiry(from value: Any?) -> Date? {
+        guard let raw = (value as? Double) ?? (value as? String).flatMap(Double.init),
+              raw.isFinite, raw > 0 else { return nil }
+        let seconds = raw > 1e11 ? raw / 1000 : raw
+        guard seconds > 978_307_200 else { return nil }  // before 2001-01-01: not credible
+        return Date(timeIntervalSince1970: seconds)
     }
 
     public static func readToken(runner: any SecurityCommandRunning = SecurityCommandRunner(),
                                  timeout: Duration = .seconds(8),
                                  allowInteractiveFallback: Bool = false) async throws -> String {
+        try await readCredential(runner: runner, timeout: timeout,
+                                 allowInteractiveFallback: allowInteractiveFallback).token
+    }
+
+    public static func readCredential(
+        runner: any SecurityCommandRunning = SecurityCommandRunner(),
+        timeout: Duration = .seconds(8),
+        allowInteractiveFallback: Bool = false
+    ) async throws -> ClaudeCredential {
         // Read via /usr/bin/security: Claude Code creates the item through that tool,
         // so it is permanently in the item's ACL (`apple-tool:` partition) and the read
         // never triggers the per-app Keychain prompt. Reading with SecItemCopyMatching
@@ -156,7 +203,7 @@ public enum KeychainReader {
         // rebuild — that's what caused the endless re-prompts.
         do {
             let data = try await runner.passwordData(service: service, timeout: timeout)
-            return try token(fromJSON: data)
+            return try credential(fromJSON: data)
         } catch is CancellationError {
             throw CancellationError()
         } catch SecurityCommandError.timedOut {
@@ -177,7 +224,7 @@ public enum KeychainReader {
     }
 
     // Fallback only; may show the per-app Keychain prompt (and blocks until answered).
-    static func readViaSecItem() throws -> String {
+    static func readViaSecItem() throws -> ClaudeCredential {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -189,6 +236,6 @@ public enum KeychainReader {
         guard status == errSecSuccess, let data = item as? Data else {
             throw UsageError.noToken
         }
-        return try token(fromJSON: data)
+        return try credential(fromJSON: data)
     }
 }

@@ -28,7 +28,16 @@ public final class UsageStore {
     private var waiters: [UUID: [UUID: CheckedContinuation<Void, Never>]] = [:]
     private var pendingConnectivityRefresh = false
     private var consecutiveTransientFailures = 0
+    private var consecutiveRateLimits = 0
+    private var consecutiveAuthFailures = 0
     private let logger = Logger(subsystem: "com.przemek.ClaudeUsageMenuBar", category: "usage-store")
+
+    /// First retry after a 429, regardless of how long the server asks us to wait.
+    static let rateLimitProbeBase: Double = 120
+    /// Floor for rate-limit backoff — a `Retry-After: 0` must not become a spin loop.
+    static let minimumRateLimitBackoff: Double = 30
+    /// Poll cadence while waiting for Claude Code to refresh an expired token.
+    static let expiredTokenPollSeconds: Double = 30
 
     /// Current delay requested by retry policy. 0 when not backing off.
     public private(set) var backoffSeconds: Double = 0
@@ -67,7 +76,13 @@ public final class UsageStore {
 
         let startedAt = now()
         if let nextRetryAt, nextRetryAt > startedAt {
-            guard trigger == .connectivity, Self.isConnectivityFailure(lastError) else { return }
+            // A manual refresh is one deliberate request and can't loop, so it always
+            // wins over the backoff — being told to wait 48 minutes with no way to ask
+            // again is worse than the request it saves. Automatic triggers stay gated,
+            // except reconnecting after a connectivity failure.
+            let overrides = trigger == .manual
+                || (trigger == .connectivity && Self.isConnectivityFailure(lastError))
+            guard overrides else { return }
             self.nextRetryAt = nil
             backoffSeconds = 0
         }
@@ -107,7 +122,12 @@ public final class UsageStore {
                 let retryDelay = self.nextRetryAt.map {
                     max(0, $0.timeIntervalSince(self.now()))
                 } ?? 0
-                let delay = max(interval, retryDelay)
+                // Re-checking an expired token is a local Keychain read, not a request,
+                // so poll for the refreshed one faster than the user's interval — the
+                // app should come back to life shortly after they run Claude Code.
+                let delay = self.lastError == .tokenExpired
+                    ? min(interval, Self.expiredTokenPollSeconds)
+                    : max(interval, retryDelay)
                 guard delay.isFinite else { return }
                 do {
                     try await Task.sleep(for: .seconds(min(max(delay, 1), 3600)))
@@ -237,7 +257,32 @@ public final class UsageStore {
         }
     }
 
+    /// Per-family attempt counters, so rate-limit and auth backoff each escalate on
+    /// their own history rather than on one shared "something went wrong" tally.
+    private func trackConsecutiveFailures(for result: Result<UsageSnapshot, UsageError>) {
+        guard case .failure(let error) = result else {
+            consecutiveRateLimits = 0
+            consecutiveAuthFailures = 0
+            return
+        }
+        switch error {
+        case .cancelled:
+            break  // an abandoned attempt is evidence of nothing
+        case .rateLimited:
+            consecutiveRateLimits += 1
+            consecutiveAuthFailures = 0
+        case .unauthorized, .forbidden:
+            consecutiveAuthFailures += 1
+            consecutiveRateLimits = 0
+        default:
+            consecutiveRateLimits = 0
+            consecutiveAuthFailures = 0
+        }
+    }
+
     private func updateRetryPolicy(for result: Result<UsageSnapshot, UsageError>, at date: Date) {
+        trackConsecutiveFailures(for: result)
+
         switch result {
         case .success:
             consecutiveTransientFailures = 0
@@ -245,8 +290,17 @@ public final class UsageStore {
             nextRetryAt = nil
         case .failure(.rateLimited(let retryAfter)):
             consecutiveTransientFailures += 1
-            let requested = retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? 120
-            backoffSeconds = min(max(requested, 1), 3600)
+            let requested = retryAfter.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+                ?? Self.rateLimitProbeBase
+            // Honour Retry-After, but probe well before a long server-suggested wait.
+            // The hour-long lockout the API hands out after repeated auth failures
+            // clears as soon as a fresh token is in play, and waiting it out leaves
+            // the app showing day-old numbers. Ceiling doubles per consecutive 429:
+            // 2m, 4m, 8m, 16m, 32m, then the server's figure.
+            let exponent = min(max(consecutiveRateLimits - 1, 0), 5)
+            let ceiling = min(Self.rateLimitProbeBase * pow(2, Double(exponent)), 3600)
+            let chosen = min(requested, ceiling)
+            backoffSeconds = min(max(chosen, Self.minimumRateLimitBackoff), 3600)
             nextRetryAt = date.addingTimeInterval(backoffSeconds)
         case .failure(.network), .failure(.transport), .failure(.credentialTimeout),
              .failure(.requestTimeout):
@@ -269,8 +323,21 @@ public final class UsageStore {
             nextRetryAt = date.addingTimeInterval(backoffSeconds)
         case .failure(.cancelled):
             break
-        case .failure(.noToken), .failure(.unauthorized), .failure(.forbidden),
-             .failure(.credentialAccess), .failure(.httpStatus):
+        case .failure(.unauthorized), .failure(.forbidden):
+            // A token the server actively rejects must not be re-sent on every poll
+            // tick: that is what earns the hour-long 429 lockout. Back off hard and
+            // let the local expiry check (or a manual refresh) drive recovery.
+            consecutiveTransientFailures = 0
+            let exponent = min(max(consecutiveAuthFailures - 1, 0), 4)
+            backoffSeconds = min(120 * pow(2, Double(exponent)), 1800)
+            nextRetryAt = date.addingTimeInterval(backoffSeconds)
+        case .failure(.tokenExpired):
+            // Detected without a request, so re-checking is free — no backoff. The
+            // next poll picks the token up the moment Claude Code refreshes it.
+            consecutiveTransientFailures = 0
+            backoffSeconds = 0
+            nextRetryAt = nil
+        case .failure(.noToken), .failure(.credentialAccess), .failure(.httpStatus):
             consecutiveTransientFailures = 0
             backoffSeconds = 0
             nextRetryAt = nil

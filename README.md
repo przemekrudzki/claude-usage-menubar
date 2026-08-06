@@ -115,8 +115,13 @@ The dropdown always shows the full breakdown regardless of the menu-bar toggles.
   icon, so no other window appears when it starts.
 - **"Sign in to Claude Code":** open Terminal, run `claude`, and complete sign-in. Then use
   **Refresh now** in Claude Usage.
+- **"Claude Code token expired":** Claude Code only renews its access token when it runs, so
+  after an idle stretch (typically overnight) the stored token is stale and Claude Usage has
+  nothing valid to ask with. Run any `claude` command; the app notices the new token within
+  about 30 seconds on its own. Until then it keeps showing the last-known numbers.
 - **Usage temporarily unavailable:** confirm the Mac is online and wait for the next retry.
-  The app deliberately backs off after network, server, or rate-limit failures.
+  The app deliberately backs off after network, server, or rate-limit failures — but
+  **Refresh** always overrides the backoff if you want to try immediately.
 - **Launch at login needs approval:** enable Claude Usage under **System Settings → General
   → Login Items**, then reopen the app's Settings to confirm the current status.
 - **Still not working:** quit and reopen the app. Diagnostic logs are available with:
@@ -157,6 +162,11 @@ rm -rf "$HOME/Library/Application Support/ClaudeUsage"
 - **Resilient to flaky conditions:** it atomically caches the last-known numbers for offline
   startup, coalesces overlapping refresh triggers, refreshes when the network returns or the
   Mac wakes, and applies bounded retry/backoff when the endpoint or network is unavailable.
+- **It won't spend requests on a dead token:** the Keychain item carries an expiry, so once
+  the stored token has lapsed the app stops calling the API and waits for Claude Code to
+  renew it. That check is local and free, so it re-checks every 30 seconds and comes back to
+  life on its own. (Sending an expired token instead gets the account rate-limited for an
+  hour, which is what used to leave the dropdown stuck on yesterday's numbers.)
 
 ## Development
 

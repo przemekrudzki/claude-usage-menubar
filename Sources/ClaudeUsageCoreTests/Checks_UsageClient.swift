@@ -74,6 +74,34 @@ func usageClientChecks() async {
     let c7 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session())
     t.equal(await c7.fetch(), .failure(.forbidden))
 
+    // An expired token never reaches the network — that request would come back 401,
+    // and three of those in a row get the account locked out for an hour.
+    StubURLProtocol.status = 200
+    StubURLProtocol.capturedRequest = nil
+    let clockNow = Date(timeIntervalSince1970: 1_754_467_200)
+    let c9 = UsageClient(
+        credentialProvider: {
+            ClaudeCredential(token: "tok", expiresAt: clockNow.addingTimeInterval(-30))
+        },
+        session: StubURLProtocol.session(), now: { clockNow }
+    )
+    t.equal(await c9.fetch(), .failure(.tokenExpired))
+    t.expect(StubURLProtocol.capturedRequest == nil, "expired token must not hit the network")
+
+    // A token with time left on it is used as before.
+    StubURLProtocol.body = Data(#"{"limits":[{"kind":"session","group":"session","percent":40,"severity":"normal","resets_at":"2026-07-07T19:40:00+00:00"},{"kind":"weekly_all","group":"weekly","percent":20,"severity":"normal","resets_at":"2026-07-11T08:00:00+00:00"}],"extra_usage":{"is_enabled":false}}"#.utf8)
+    let c10 = UsageClient(
+        credentialProvider: {
+            ClaudeCredential(token: "tok", expiresAt: clockNow.addingTimeInterval(3600))
+        },
+        session: StubURLProtocol.session(), now: { clockNow }
+    )
+    if case .success = await c10.fetch() {
+        t.expect(true, "live token fetches")
+    } else {
+        t.expect(false, "expected success for a live token")
+    }
+
     StubURLProtocol.status = 200
     StubURLProtocol.body = Data("oversized".utf8)
     let c8 = UsageClient(tokenProvider: { "tok" }, session: StubURLProtocol.session(),

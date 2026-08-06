@@ -128,11 +128,65 @@ func usageStoreChecks() async {
     t.equal(await gateFetcher.resultsConsumed, 2)
     t.equal(gated.state, .ok(snap(90)))
 
-    let hugeRetryFetcher = SeqFetcher([.failure(.rateLimited(retryAfter: 1e300))])
-    let hugeRetry = UsageStore(fetcher: hugeRetryFetcher, now: { now }, jitter: { _ in 0 })
+    // A server asking for an hour must not blank the app for an hour: the first probe
+    // is 2 minutes in, and the ceiling only doubles from there.
+    let hugeRetryFetcher = SeqFetcher([
+        .failure(.rateLimited(retryAfter: 1e300)),
+        .failure(.rateLimited(retryAfter: 3600)),
+        .failure(.rateLimited(retryAfter: 3600)),
+    ])
+    let hugeClock = MutableNow(now)
+    let hugeRetry = UsageStore(fetcher: hugeRetryFetcher, now: { hugeClock.get() },
+                               jitter: { _ in 0 })
     await hugeRetry.refresh()
-    t.equal(hugeRetry.backoffSeconds, 3600)
-    t.equal(hugeRetry.nextRetryAt, now.addingTimeInterval(3600))
+    t.equal(hugeRetry.backoffSeconds, 120)
+    t.equal(hugeRetry.nextRetryAt, now.addingTimeInterval(120))
+    hugeClock.advance(120)
+    await hugeRetry.refresh()
+    t.equal(hugeRetry.backoffSeconds, 240)
+    hugeClock.advance(240)
+    await hugeRetry.refresh()
+    t.equal(hugeRetry.backoffSeconds, 480)
+
+    // `Retry-After: 0` used to mean "retry every poll tick, forever"; it now has a floor.
+    let zeroRetry = UsageStore(fetcher: StubFetcher(result: .failure(.rateLimited(retryAfter: 0))),
+                               now: { now }, jitter: { _ in 0 })
+    await zeroRetry.refresh()
+    t.equal(zeroRetry.backoffSeconds, 30)
+
+    // An expired token is spotted locally, so re-checking costs nothing: no backoff,
+    // and the very next poll picks up whatever Claude Code has refreshed.
+    let expiredFetcher = SeqFetcher([.failure(.tokenExpired), .success(snap(60))])
+    let expired = UsageStore(fetcher: expiredFetcher, now: { now }, jitter: { _ in 0 })
+    await expired.refresh()
+    t.equal(expired.state, .unavailable(.tokenExpired))
+    t.equal(expired.backoffSeconds, 0)
+    t.expect(expired.nextRetryAt == nil, "expired token must not gate the next poll")
+    await expired.refresh(trigger: .poll)
+    t.equal(expired.state, .ok(snap(60)))
+
+    // A token the server rejects is a different story — re-sending it every minute is
+    // what earns the hour-long lockout, so it backs off 2m, 4m, 8m…
+    let rejectedClock = MutableNow(now)
+    let rejected = UsageStore(fetcher: StubFetcher(result: .failure(.unauthorized)),
+                              now: { rejectedClock.get() }, jitter: { _ in 0 })
+    await rejected.refresh()
+    t.equal(rejected.backoffSeconds, 120)
+    t.equal(rejected.state, .needsAuth)
+    rejectedClock.advance(120)
+    await rejected.refresh(trigger: .poll)
+    t.equal(rejected.backoffSeconds, 240)
+
+    // …but the user can always force one through.
+    let manualFetcher = SeqFetcher([.failure(.rateLimited(retryAfter: 3600)), .success(snap(70))])
+    let manual = UsageStore(fetcher: manualFetcher, now: { now }, jitter: { _ in 0 })
+    await manual.refresh(trigger: .poll)
+    t.equal(await manualFetcher.resultsConsumed, 1)
+    await manual.refresh(trigger: .menuOpen)
+    t.equal(await manualFetcher.resultsConsumed, 1)
+    await manual.refresh(trigger: .manual)
+    t.equal(await manualFetcher.resultsConsumed, 2)
+    t.equal(manual.state, .ok(snap(70)))
 
     let watchdogFetcher = BlockingFetcher()
     let watchdogStore = UsageStore(fetcher: watchdogFetcher, now: { now },

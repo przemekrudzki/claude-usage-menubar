@@ -2,34 +2,52 @@ import Foundation
 import OSLog
 
 public final class UsageClient: UsageFetching {
-    private let tokenProvider: @Sendable () async throws -> String
+    private let credentialProvider: @Sendable () async throws -> ClaudeCredential
     private let session: URLSession
     private let now: @Sendable () -> Date
     private let maxResponseBytes: Int
     private let url = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private let logger = Logger(subsystem: "com.przemek.ClaudeUsageMenuBar", category: "usage-client")
 
-    public init(tokenProvider: @escaping @Sendable () async throws -> String = {
-                    try await KeychainReader.readToken()
+    public init(credentialProvider: @escaping @Sendable () async throws -> ClaudeCredential = {
+                    try await KeychainReader.readCredential()
                 },
                 session: URLSession? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
                 maxResponseBytes: Int = 512 * 1024) {
-        self.tokenProvider = tokenProvider
+        self.credentialProvider = credentialProvider
         self.session = session ?? Self.makeSession()
         self.now = now
         self.maxResponseBytes = max(1, maxResponseBytes)
     }
 
+    /// Convenience for callers that only have a bare token (no expiry to check).
+    public convenience init(tokenProvider: @escaping @Sendable () async throws -> String,
+                            session: URLSession? = nil,
+                            now: @escaping @Sendable () -> Date = { Date() },
+                            maxResponseBytes: Int = 512 * 1024) {
+        self.init(credentialProvider: { ClaudeCredential(token: try await tokenProvider()) },
+                  session: session, now: now, maxResponseBytes: maxResponseBytes)
+    }
+
     public func fetch() async -> Result<UsageSnapshot, UsageError> {
-        let token: String
-        do { token = try await tokenProvider() }
+        let credential: ClaudeCredential
+        do { credential = try await credentialProvider() }
         catch let e as UsageError { return .failure(e) }
         catch is CancellationError { return .failure(.cancelled) }
         catch { return .failure(.noToken) }
 
+        // Claude Code refreshes this token only when it runs, so after an idle night
+        // the stored one is dead. Requesting with it would earn a 401 — and three of
+        // those in a row get the account 429'd for an hour.
+        if credential.isExpired(now: now()) {
+            let age = credential.expiresAt.map { now().timeIntervalSince($0) } ?? 0
+            logger.notice("Stored access token expired \(age, privacy: .public)s ago; skipping the request")
+            return .failure(.tokenExpired)
+        }
+
         var req = URLRequest(url: url)
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("Bearer \(credential.token)", forHTTPHeaderField: "Authorization")
         req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
 

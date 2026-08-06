@@ -13,6 +13,11 @@ public enum Reducer {
             case .noToken, .unauthorized, .forbidden:
                 if let stale = staleState(from: previous, now: now) { return stale }
                 return .needsAuth
+            case .tokenExpired:
+                // Distinct from `.needsAuth`: the user is still signed in, the token
+                // just needs Claude Code to run once, so the advice differs.
+                if let stale = staleState(from: previous, now: now) { return stale }
+                return .unavailable(.tokenExpired)
             case .credentialAccess, .credentialTimeout, .requestTimeout,
                  .network, .transport, .httpStatus,
                  .decoding, .rateLimited, .responseTooLarge:

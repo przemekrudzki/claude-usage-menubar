@@ -59,6 +59,9 @@ public enum UsageState: Equatable, Sendable {
 
 public enum UsageError: Error, Equatable, Sendable {
     case noToken
+    /// The stored Claude Code access token is past its `expiresAt`. Detected locally,
+    /// so no request is spent on a token the server is certain to reject.
+    case tokenExpired
     case unauthorized
     case forbidden
     case credentialAccess(String)

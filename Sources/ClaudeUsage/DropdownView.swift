@@ -160,6 +160,8 @@ struct DropdownView: View {
                 return "Showing cached usage; \(retry.lowercased())"
             }
             return "Showing cached usage; temporarily rate-limited"
+        case .tokenExpired:
+            return "Showing cached usage; run Claude Code to refresh its token"
         case .noToken, .unauthorized, .forbidden:
             return "Showing cached usage; sign-in required"
         case .network, .transport:
@@ -190,6 +192,10 @@ struct DropdownView: View {
             return ("Temporarily rate-limited",
                     retryText(now: now) ?? "Claude Usage will retry automatically.",
                     "hourglass")
+        case .tokenExpired:
+            return ("Claude Code token expired",
+                    "Run any Claude Code command to refresh it — this picks it up automatically.",
+                    "key.horizontal")
         case .noToken, .unauthorized, .forbidden:
             return ("Sign in to Claude Code", "Complete sign-in in Terminal, then refresh.",
                     "person.crop.circle.badge.exclamationmark")
@@ -256,13 +262,15 @@ struct DropdownView: View {
                     if store.isRefreshing {
                         ProgressView().controlSize(.small)
                     } else {
-                        Image(systemName: refreshBlocked(now: now) ? "clock" : "arrow.clockwise")
+                        Image(systemName: "arrow.clockwise")
                     }
-                    Text(refreshButtonTitle(now: now))
+                    Text(store.isRefreshing ? "Refreshing" : "Refresh")
                 }
             }
             .controlSize(.small)
-            .disabled(store.isRefreshing || refreshBlocked(now: now))
+            // Never disabled by backoff: a manual refresh overrides it in the store,
+            // so the countdown is information about the *automatic* retry, not a lock.
+            .disabled(store.isRefreshing)
             .keyboardShortcut("r", modifiers: .command)
         }
     }
@@ -292,19 +300,6 @@ struct DropdownView: View {
         case .ok(let snapshot), .stale(let snapshot, _): return snapshot
         case .loading, .needsAuth, .unavailable: return nil
         }
-    }
-
-    private func refreshBlocked(now: Date) -> Bool {
-        guard let retryAt = store.nextRetryAt else { return false }
-        return retryAt > now
-    }
-
-    private func refreshButtonTitle(now: Date) -> String {
-        if store.isRefreshing { return "Refreshing" }
-        if let retryAt = store.nextRetryAt, retryAt > now {
-            return "Retry in \(Format.countdown(to: retryAt, now: now))"
-        }
-        return "Refresh"
     }
 
     private func retryText(now: Date) -> String? {
