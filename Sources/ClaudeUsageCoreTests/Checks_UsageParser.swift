@@ -69,6 +69,26 @@ func usageParserChecks() {
         _ = try UsageParser.snapshot(from: Data(extremeJSON.utf8), now: now)
     }
 
+    // Swift bridges the JSON numbers 0 and 1 to Bool, so a rejection of "boolean"
+    // values must not swallow a genuine 0% (or 1%) reading — the state every window
+    // is in right after a reset.
+    let zeroJSON = #"{"five_hour":{"utilization":0,"resets_at":"2026-07-07T19:40:00Z"},"seven_day":{"utilization":0.0,"resets_at":"2026-07-11T08:00:00Z"},"extra_usage":{"is_enabled":true,"used_credits":0.0,"monthly_limit":5000,"decimal_places":1},"limits":[{"kind":"session","percent":0,"severity":"normal","resets_at":"2026-07-07T19:40:00Z"},{"kind":"weekly_all","percent":1,"severity":"normal","resets_at":"2026-07-11T08:00:00Z"},{"kind":"weekly_scoped","group":"weekly","percent":0,"scope":{"model":{"display_name":"Fable"}}}]}"#
+    if let snap = try? UsageParser.snapshot(from: Data(zeroJSON.utf8), now: now) {
+        t.equal(snap.session.percent, 0)
+        t.equal(snap.weeklyAll.percent, 1)
+        t.equal(snap.modelWeekly.count, 1)
+        t.equal(snap.modelWeekly.first?.percent ?? -1, 0)
+        t.equal(snap.credits?.used ?? -1, 0)
+        t.equal(snap.credits?.limit ?? -1, 500)
+        t.equal(snap.credits?.decimalPlaces ?? -1, 1)
+    } else {
+        t.expect(false, "all-zero usage should parse")
+    }
+    let boolPercentJSON = #"{"five_hour":{"utilization":true,"resets_at":"2026-07-07T19:40:00Z"},"seven_day":{"utilization":10,"resets_at":"2026-07-11T08:00:00Z"}}"#
+    t.throwsError("a real JSON boolean is still not a percentage") {
+        _ = try UsageParser.snapshot(from: Data(boolPercentJSON.utf8), now: now)
+    }
+
     let badCreditsJSON = #"{"five_hour":{"utilization":5,"resets_at":"2026-07-07T19:40:00Z"},"seven_day":{"utilization":10,"resets_at":"2026-07-11T08:00:00Z"},"extra_usage":{"is_enabled":true,"used_credits":100,"monthly_limit":500,"decimal_places":1000}}"#
     if let snap = try? UsageParser.snapshot(from: Data(badCreditsJSON.utf8), now: now) {
         t.expect(snap.credits == nil, "invalid credit precision should omit credits")

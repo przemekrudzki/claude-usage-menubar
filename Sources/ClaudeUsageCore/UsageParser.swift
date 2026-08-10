@@ -25,14 +25,24 @@ public enum UsageParser {
                              modelWeekly: modelWeekly, credits: credits, fetchedAt: now)
     }
 
+    /// `value is Bool` is not the test it looks like: Swift's NSNumber bridging
+    /// reports true for the JSON numbers 0 and 1, so it would reject a genuine 0%
+    /// reading — the state every window is in right after a reset. JSONSerialization
+    /// hands back `__NSCFBoolean` for real booleans, which is what this checks.
+    private static func decimal(_ value: Any?) -> NSNumber? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        return number
+    }
+
     private static func number(_ value: Any?) -> Double? {
-        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
+        guard let number = decimal(value) else { return nil }
         let result = number.doubleValue
         return result.isFinite && result >= 0 && result <= 10_000 ? result : nil
     }
 
     private static func amount(_ value: Any?) -> Double? {
-        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
+        guard let number = decimal(value) else { return nil }
         let result = number.doubleValue
         return result.isFinite && result >= 0 ? result : nil
     }
