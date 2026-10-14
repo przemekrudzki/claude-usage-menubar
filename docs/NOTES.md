@@ -139,3 +139,16 @@ Built spec-first: `docs/superpowers/specs/` (design) → `docs/superpowers/plans
 (step-by-step implementation plan) → subagent-driven TDD, task by task, with a final
 whole-branch review. Those two docs are the fullest description of intent and the task
 breakdown if you need the "why" behind a piece.
+
+## Desktop-app use: token keep-alive (2026-10-14)
+
+The Claude desktop app does not renew the `Claude Code-credentials` Keychain token; only the
+CLI does. `scripts/token-keepalive.sh`, installed as a launchd agent by
+`scripts/install-keepalive.sh` (every 5 min + at login), renews it when under 10 min remain:
+`claude auth status` first, then a one-word Haiku prompt as fallback. Log:
+`~/Library/Logs/claude-usage-token-keepalive.log`.
+
+- `claude setup-token` tokens do NOT work for the usage endpoint: 403 `oauth_scope_insufficient`
+  (needs `user:profile`).
+- Building with Command Line Tools 27 + the macOS 27 SDK fails (`SwiftUIMacros` plugin not
+  found for `@State`). Workaround: `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./scripts/make-app.sh`.
