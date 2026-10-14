@@ -17,6 +17,7 @@ struct DropdownView: View {
             .padding(12)
             .frame(width: 292)
         }
+        .background(Color(nsColor: .windowBackgroundColor))
         .task { await store.refresh(trigger: .menuOpen) }
     }
 
